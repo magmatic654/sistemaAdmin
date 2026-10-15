@@ -1,8 +1,26 @@
 "use client";
-import { useRef, useState, type FormEvent } from "react";
-import { Plus, ScanLine, Trash2, Check, ArrowRight } from "lucide-react";
-import type { Employee, Supplier, Sale, Movement, Payment } from "@/lib/types";
-import { businessToday } from "@/lib/domain";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  Plus,
+  ScanLine,
+  Trash2,
+  Check,
+  ArrowRight,
+  Focus,
+  BadgePercent,
+  Wallet,
+  ReceiptText,
+} from "lucide-react";
+import type {
+  Employee,
+  Supplier,
+  Sale,
+  Movement,
+  Payment,
+  PayoutPreview,
+} from "@/lib/types";
+import { businessToday, commissionAmount, periodRange } from "@/lib/domain";
+import { scanValue, isScanTerminator } from "@/lib/scanner";
 import { DatePicker, Select, money, shortDate } from "./ui";
 
 export const methodOptions = [
@@ -48,10 +66,12 @@ function Footer({
   busy,
   onClose,
   label,
+  submitDisabled = false,
 }: {
   busy: boolean;
   onClose: () => void;
   label: string;
+  submitDisabled?: boolean;
 }) {
   return (
     <footer className="modal-footer">
@@ -63,7 +83,7 @@ function Footer({
       >
         Cancelar
       </button>
-      <button className="button primary" disabled={busy}>
+      <button className="button primary" disabled={busy || submitDisabled}>
         {busy ? (
           "Guardando…"
         ) : (
@@ -80,18 +100,40 @@ export function CommissionFields({
   employees,
   value,
   onChange,
+  defaultRateBps = null,
+  total = 0,
 }: {
   employees: Employee[];
-  value: { employeeId: string; mode: string; value: string } | null;
+  value: {
+    employeeId: string;
+    mode: string;
+    value: string;
+    rememberRate?: boolean;
+  } | null;
+  defaultRateBps?: number | null;
+  total?: number;
   onChange: (
-    value: { employeeId: string; mode: string; value: string } | null,
+    value: {
+      employeeId: string;
+      mode: string;
+      value: string;
+      rememberRate?: boolean;
+    } | null,
   ) => void;
 }) {
+  let amount = 0;
+  try {
+    if (value) amount = commissionAmount(total, value.mode, value.value);
+  } catch {
+    /* Incomplete input while typing. */
+  }
   return (
     <div className="commission-box">
       <label className="switch-label">
         <span>
-          <strong>Comisión</strong>
+          <strong>
+            <BadgePercent size={22} /> Comisión de esta venta
+          </strong>
         </span>
         <input
           type="checkbox"
@@ -100,14 +142,18 @@ export function CommissionFields({
           onChange={(event) =>
             onChange(
               event.target.checked
-                ? { employeeId: "", mode: "fixed", value: "" }
+                ? {
+                    employeeId: "",
+                    mode: "percent",
+                    value: defaultRateBps ? String(defaultRateBps / 100) : "",
+                  }
                 : null,
             )
           }
         />
       </label>
       {value && (
-        <div className="form-grid">
+        <div className="form-grid commission-fields">
           <Select
             label="Empleado"
             value={value.employeeId}
@@ -127,7 +173,13 @@ export function CommissionFields({
                 { value: "fixed", label: "Monto fijo" },
                 { value: "percent", label: "Porcentaje" },
               ]}
-              onChange={(mode) => onChange({ ...value, mode })}
+              onChange={(mode) =>
+                onChange({
+                  ...value,
+                  mode,
+                  rememberRate: mode === "percent" && value.rememberRate,
+                })
+              }
             />
             <label>
               {value.mode === "percent" ? "Porcentaje (%)" : "Comisión ($)"}
@@ -145,6 +197,22 @@ export function CommissionFields({
           {!employees.some((e) => e.active) && (
             <p className="hint wide">Agrega un empleado primero.</p>
           )}
+          {value.mode === "percent" && (
+            <label className="check-label wide">
+              <input
+                type="checkbox"
+                checked={!!value.rememberRate}
+                onChange={(event) =>
+                  onChange({ ...value, rememberRate: event.target.checked })
+                }
+              />
+              Usar este % en próximas ventas
+            </label>
+          )}
+          <div className="commission-calculation wide">
+            <span>Comisión a pagar</span>
+            <strong className="number">{money(amount)}</strong>
+          </div>
         </div>
       )}
     </div>
@@ -157,6 +225,7 @@ export function MovementForm({
   employees,
   suppliers,
   providerNames,
+  defaultRateBps,
   write,
   onDone,
   onClose,
@@ -166,6 +235,7 @@ export function MovementForm({
   employees: Employee[];
   suppliers: Supplier[];
   providerNames: string[];
+  defaultRateBps: number | null;
   write: Write;
   onDone: () => void;
   onClose: () => void;
@@ -192,10 +262,12 @@ export function MovementForm({
   ]);
   const [received, setReceived] = useState(""),
     [partial, setPartial] = useState(false);
+  const [manualOrigin, setManualOrigin] = useState("manual");
   const [commission, setCommission] = useState<{
     employeeId: string;
     mode: string;
     value: string;
+    rememberRate?: boolean;
   } | null>(null);
   const { busy, error, submit } = useSubmit(write, onDone);
   const total =
@@ -233,7 +305,11 @@ export function MovementForm({
           : paymentDate
         : recordDate,
       contact,
-      phone: source?.phone || "",
+      phone: source?.phone || f.get("phone") || "",
+      manual: kind === "entrada" && !source,
+      folio: f.get("folio"),
+      origin: manualOrigin,
+      manualTicketCode: f.get("manualTicketCode"),
       category,
       concept: concept || items[0].description,
       ticketCode: f.get("ticketCode"),
@@ -250,306 +326,378 @@ export function MovementForm({
     });
   }
   return (
-    <form onSubmit={save}>
-      <fieldset disabled={busy} className="modal-body form-stack">
-        {kind === "entrada" && !source && (
-          <label>
-            ID o folio del ticket
-            <input
-              name="ticketCode"
-              placeholder="ID, folio o código de barras"
-              maxLength={100}
-              required
-            />
-          </label>
-        )}
-        {source && (
-          <div className="ticket-origin">
-            <ScanLine size={24} />
-            <div>
-              <strong>{source.folio}</strong>
-              <span>
-                {source.origin === "blanca" ? "Blanco" : "Negro"} ·{" "}
-                {shortDate(source.date)}
-              </span>
-            </div>
-          </div>
-        )}
-        <div className="form-grid">
-          <DatePicker
-            label="Fecha del movimiento"
-            value={recordDate}
-            onChange={setDate}
-            disabled={!!source}
-          />
-          {kind === "salida" ? (
-            <Select
-              label="Tipo de movimiento"
-              value={category}
-              onChange={setCategory}
-              options={expenseCategories}
-            />
-          ) : (
-            <Select
-              label="Tipo de entrada"
-              disabled={!!source}
-              value={category}
-              onChange={setCategory}
-              options={(source
-                ? ["Venta con ticket"]
-                : ["Venta de productos", "Venta de servicios", "Otros ingresos"]
-              ).map((value) => ({ value, label: value }))}
-            />
-          )}
-        </div>
-        {kind === "salida" && (
-          <div className="supplier-autocomplete">
-            <label>
-              Proveedor o comercio <span className="optional">Opcional</span>
-              <input
-                list="provider-names"
-                value={contact}
-                onChange={(event) => {
-                  setContact(event.target.value);
-                  const match = suppliers.find(
-                    (s) =>
-                      s.active &&
-                      s.name.toLocaleLowerCase() ===
-                        event.target.value.toLocaleLowerCase(),
-                  );
-                  if (match) selectSupplier(match);
-                  else setSupplierId("");
-                }}
-                placeholder="Buscar proveedor por nombre…"
-                autoComplete="off"
-              />
-            </label>
-            <datalist id="provider-names">
-              {[
-                ...new Set([
-                  ...suppliers.filter((s) => s.active).map((s) => s.name),
-                  ...providerNames,
-                ]),
-              ].map((name) => (
-                <option key={name} value={name} />
-              ))}
-            </datalist>
-            {contact &&
-              suppliers
-                .filter(
-                  (s) =>
-                    s.active &&
-                    s.name.toLowerCase().includes(contact.toLowerCase()) &&
-                    s.id !== supplierId,
-                )
-                .slice(0, 4)
-                .map((s) => (
-                  <button
-                    type="button"
-                    className="supplier-suggestion"
-                    key={s.id}
-                    onClick={() => selectSupplier(s)}
-                  >
-                    <strong>{s.name}</strong>
-                    <span>
-                      {s.concept || s.category}
-                      <ArrowRight size={14} />
-                    </span>
-                  </button>
-                ))}
-          </div>
-        )}
-        {source ? (
-          <div className="source-lines">
-            {source.items.map((item, i) => (
-              <div key={i}>
-                <span>
-                  {item.quantity} × {item.description}
-                  <small>{money(item.unitCents)} por unidad</small>
-                </span>
-                <strong className="number">{money(item.totalCents)}</strong>
+    <form
+      onSubmit={save}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && event.target instanceof HTMLInputElement)
+          event.preventDefault();
+      }}
+    >
+      <div className="modal-body">
+        <fieldset disabled={busy} className="form-stack">
+          {kind === "entrada" && !source && (
+            <>
+              <div className="manual-entry-badge">
+                <ReceiptText size={22} />
+                <strong>Registro manual</strong>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="line-editor">
-            {items.map((line, i) => (
-              <div className="line-row" key={i}>
-                <label className="line-description">
-                  {kind === "entrada" ? "Producto o servicio" : "Concepto"}
-                  <input
-                    value={line.description}
-                    onChange={(event) =>
-                      changeLine(i, "description", event.target.value)
-                    }
-                    placeholder={
-                      kind === "entrada"
-                        ? "Ej. Llanta usada 205/55 R16"
-                        : "Ej. Material de limpieza"
-                    }
-                    maxLength={300}
-                    required
-                    autoFocus={i === 0}
-                  />
-                </label>
+              <div className="form-grid">
                 <label>
-                  Cantidad
+                  Folio del ticket
                   <input
-                    type="number"
-                    min="1"
-                    max="100000"
-                    step="1"
-                    value={line.quantity}
-                    onChange={(event) =>
-                      changeLine(i, "quantity", event.target.value)
-                    }
+                    name="folio"
+                    maxLength={160}
+                    placeholder="Folio o número de control"
                     required
+                    data-autofocus
                   />
                 </label>
-                <label>
-                  Precio por unidad
-                  <input
-                    inputMode="decimal"
-                    placeholder="0.00"
-                    value={line.unitPrice}
-                    onChange={(event) =>
-                      changeLine(i, "unitPrice", event.target.value)
-                    }
-                    required
-                  />
-                </label>
-                {items.length > 1 && (
-                  <button
-                    type="button"
-                    className="icon-button remove-line"
-                    aria-label={`Eliminar concepto ${i + 1}`}
-                    onClick={() =>
-                      setItems(items.filter((_, index) => index !== i))
-                    }
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                )}
+                <Select
+                  label="Origen del ticket"
+                  value={manualOrigin}
+                  onChange={setManualOrigin}
+                  options={[
+                    { value: "manual", label: "Sin sistema" },
+                    { value: "negra", label: "Sistema negro" },
+                    { value: "blanca", label: "Sistema blanco" },
+                  ]}
+                />
               </div>
-            ))}
-            <button
-              type="button"
-              className="text-button"
-              onClick={() =>
-                setItems([
-                  ...items,
-                  { description: "", quantity: "1", unitPrice: "" },
-                ])
-              }
-            >
-              <Plus size={15} />
-              Agregar otro concepto
-            </button>
-          </div>
-        )}
-        <div className="form-grid">
-          <Select
-            label="Forma de pago"
-            value={method}
-            onChange={setMethod}
-            options={methodOptions}
-            disabled={!!source}
-          />
-          {kind === "entrada" ? (
-            <label>
-              Cliente
-              <input
-                value={contact}
-                onChange={(event) => setContact(event.target.value)}
-                maxLength={160}
-                disabled={!!source}
-              />
-            </label>
-          ) : (
-            <label>
-              Folio o referencia <span className="optional">Opcional</span>
-              <input name="reference" maxLength={160} />
-            </label>
-          )}
-        </div>
-        {!source && (
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={vatIncluded}
-              onChange={(event) => setVat(event.target.checked)}
-            />
-            El precio incluye IVA del 16%
-          </label>
-        )}
-        <div className="payment-box">
-          <label className="check-label">
-            <input
-              type="checkbox"
-              checked={partial}
-              onChange={(event) => setPartial(event.target.checked)}
-            />
-            Pago parcial o pendiente
-          </label>
-          {partial && (
-            <div className="form-grid">
               <label>
-                {kind === "entrada" ? "Cobrado ($)" : "Pagado ($)"}
+                ID completo del ticket{" "}
+                <span className="optional">Si aparece impreso</span>
                 <input
-                  value={received}
-                  onChange={(event) => setReceived(event.target.value)}
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  required
+                  name="manualTicketCode"
+                  maxLength={110}
+                  placeholder="LLA1:V:… o LLA1:P:…"
+                  autoComplete="off"
+                  spellCheck={false}
                 />
               </label>
-              <DatePicker
-                label="Fecha del pago"
-                value={paymentDate}
-                onChange={setPaymentDate}
-              />
+            </>
+          )}
+          {source && (
+            <div className="ticket-origin">
+              <ScanLine size={24} />
+              <div>
+                <strong>{source.folio}</strong>
+                <span>
+                  {source.origin === "blanca" ? "Blanco" : "Negro"} ·{" "}
+                  {shortDate(source.date)}
+                </span>
+              </div>
+              <span className="pill success">Ticket identificado</span>
             </div>
           )}
-        </div>
-        {kind === "entrada" && (
-          <CommissionFields
-            employees={employees}
-            value={commission}
-            onChange={setCommission}
-          />
-        )}
-        <label>
-          Nota <span className="optional">Opcional</span>
-          <textarea name="notes" maxLength={2000} rows={2} />
-        </label>
-        <div className="form-total">
-          <span>Total</span>
-          <strong className="number">{money(total)}</strong>
-        </div>
-        {error && (
-          <div role="alert" className="error">
-            {error}
+          <div className="form-grid">
+            <DatePicker
+              label="Fecha del movimiento"
+              value={recordDate}
+              onChange={setDate}
+              disabled={!!source}
+            />
+            {kind === "salida" ? (
+              <Select
+                label="Tipo de movimiento"
+                value={category}
+                onChange={setCategory}
+                options={expenseCategories}
+              />
+            ) : (
+              <Select
+                label="Tipo de entrada"
+                disabled={!!source}
+                value={category}
+                onChange={setCategory}
+                options={(source
+                  ? ["Venta con ticket"]
+                  : [
+                      "Venta de productos",
+                      "Venta de servicios",
+                      "Otros ingresos",
+                    ]
+                ).map((value) => ({ value, label: value }))}
+              />
+            )}
           </div>
-        )}
-      </fieldset>
-      <Footer busy={busy} onClose={onClose} label="Guardar" />
+          {source && (
+            <div className="ticket-customer">
+              <span>{source.phone || "Sin teléfono"}</span>
+              <span>
+                Subtotal {money(source.subtotalCents)} · IVA{" "}
+                {money(source.taxCents)}
+              </span>
+            </div>
+          )}
+          {kind === "salida" && (
+            <div className="supplier-autocomplete">
+              <label>
+                Proveedor o comercio <span className="optional">Opcional</span>
+                <input
+                  list="provider-names"
+                  value={contact}
+                  onChange={(event) => {
+                    setContact(event.target.value);
+                    const match = suppliers.find(
+                      (s) =>
+                        s.active &&
+                        s.name.toLocaleLowerCase() ===
+                          event.target.value.toLocaleLowerCase(),
+                    );
+                    if (match) selectSupplier(match);
+                    else setSupplierId("");
+                  }}
+                  placeholder="Buscar proveedor por nombre…"
+                  autoComplete="off"
+                />
+              </label>
+              <datalist id="provider-names">
+                {[
+                  ...new Set([
+                    ...suppliers.filter((s) => s.active).map((s) => s.name),
+                    ...providerNames,
+                  ]),
+                ].map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
+              {contact &&
+                suppliers
+                  .filter(
+                    (s) =>
+                      s.active &&
+                      s.name.toLowerCase().includes(contact.toLowerCase()) &&
+                      s.id !== supplierId,
+                  )
+                  .slice(0, 4)
+                  .map((s) => (
+                    <button
+                      type="button"
+                      className="supplier-suggestion"
+                      key={s.id}
+                      onClick={() => selectSupplier(s)}
+                    >
+                      <strong>{s.name}</strong>
+                      <span>
+                        {s.concept || s.category}
+                        <ArrowRight size={14} />
+                      </span>
+                    </button>
+                  ))}
+            </div>
+          )}
+          {source ? (
+            <div className="source-lines">
+              {source.items.map((item, i) => (
+                <div key={i}>
+                  <span>
+                    {item.quantity} × {item.description}
+                    <small>{money(item.unitCents)} por unidad</small>
+                  </span>
+                  <strong className="number">{money(item.totalCents)}</strong>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="line-editor">
+              {items.map((line, i) => (
+                <div className="line-row" key={i}>
+                  <label className="line-description">
+                    {kind === "entrada" ? "Producto o servicio" : "Concepto"}
+                    <input
+                      value={line.description}
+                      onChange={(event) =>
+                        changeLine(i, "description", event.target.value)
+                      }
+                      placeholder={
+                        kind === "entrada"
+                          ? "Ej. Llanta usada 205/55 R16"
+                          : "Ej. Material de limpieza"
+                      }
+                      maxLength={300}
+                      required
+                      autoFocus={i === 0}
+                    />
+                  </label>
+                  <label>
+                    Cantidad
+                    <input
+                      type="number"
+                      min="1"
+                      max="100000"
+                      step="1"
+                      value={line.quantity}
+                      onChange={(event) =>
+                        changeLine(i, "quantity", event.target.value)
+                      }
+                      required
+                    />
+                  </label>
+                  <label>
+                    Precio por unidad
+                    <input
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      value={line.unitPrice}
+                      onChange={(event) =>
+                        changeLine(i, "unitPrice", event.target.value)
+                      }
+                      required
+                    />
+                  </label>
+                  {items.length > 1 && (
+                    <button
+                      type="button"
+                      className="icon-button remove-line"
+                      aria-label={`Eliminar concepto ${i + 1}`}
+                      onClick={() =>
+                        setItems(items.filter((_, index) => index !== i))
+                      }
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <button
+                type="button"
+                className="text-button"
+                onClick={() =>
+                  setItems([
+                    ...items,
+                    { description: "", quantity: "1", unitPrice: "" },
+                  ])
+                }
+              >
+                <Plus size={15} />
+                Agregar otro concepto
+              </button>
+            </div>
+          )}
+          <div className="form-grid">
+            <Select
+              label="Forma de pago"
+              value={method}
+              onChange={setMethod}
+              options={methodOptions}
+              disabled={!!source}
+            />
+            {kind === "entrada" ? (
+              <label>
+                Cliente
+                <input
+                  value={contact}
+                  onChange={(event) => setContact(event.target.value)}
+                  maxLength={160}
+                  disabled={!!source}
+                />
+              </label>
+            ) : (
+              <label>
+                Folio o referencia <span className="optional">Opcional</span>
+                <input name="reference" maxLength={160} />
+              </label>
+            )}
+          </div>
+          {!source && (
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={vatIncluded}
+                onChange={(event) => setVat(event.target.checked)}
+              />
+              El precio incluye IVA del 16%
+            </label>
+          )}
+          {kind === "entrada" && !source && (
+            <label>
+              Teléfono <span className="optional">Opcional</span>
+              <input name="phone" maxLength={40} />
+            </label>
+          )}
+          <div className="payment-box">
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={partial}
+                onChange={(event) => setPartial(event.target.checked)}
+              />
+              Pago parcial o pendiente
+            </label>
+            {partial && (
+              <div className="form-grid">
+                <label>
+                  {kind === "entrada" ? "Cobrado ($)" : "Pagado ($)"}
+                  <input
+                    value={received}
+                    onChange={(event) => setReceived(event.target.value)}
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    required
+                  />
+                </label>
+                <DatePicker
+                  label="Fecha del pago"
+                  value={paymentDate}
+                  onChange={setPaymentDate}
+                />
+              </div>
+            )}
+          </div>
+          {kind === "entrada" && (
+            <CommissionFields
+              employees={employees}
+              value={commission}
+              onChange={setCommission}
+              defaultRateBps={defaultRateBps}
+              total={total}
+            />
+          )}
+          <label>
+            Nota <span className="optional">Opcional</span>
+            <textarea name="notes" maxLength={2000} rows={2} />
+          </label>
+          <div className="form-total">
+            <span>Total</span>
+            <strong className="number">{money(total)}</strong>
+          </div>
+          {error && (
+            <div role="alert" className="error">
+              {error}
+            </div>
+          )}
+        </fieldset>
+      </div>
+      <Footer
+        busy={busy}
+        onClose={onClose}
+        label={kind === "entrada" ? "Confirmar venta" : "Guardar salida"}
+      />
     </form>
   );
 }
 
 export function TicketLookup({ onSelect }: { onSelect: (sale: Sale) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null),
+    inFlight = useRef(false);
+  const [focused, setFocused] = useState(false);
   const [code, setCode] = useState(""),
     [sales, setSales] = useState<Sale[] | null>(null),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
-  async function lookup(event: FormEvent) {
-    event.preventDefault();
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+  async function lookup() {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError("");
     setSales(null);
     try {
       const response = await fetch(
-        "/api/admin?ticket=" + encodeURIComponent(code.trim()),
+        "/api/admin?ticket=" +
+          encodeURIComponent(scanValue(inputRef.current?.value || code)),
       );
       const result = await response.json();
       if (!response.ok) throw Error(result.error);
@@ -564,27 +712,76 @@ export function TicketLookup({ onSelect }: { onSelect: (sale: Sale) => void }) {
       setError((error as Error).message);
     } finally {
       setBusy(false);
+      inFlight.current = false;
+      inputRef.current?.focus();
+      inputRef.current?.select();
     }
   }
   return (
     <div className="modal-body form-stack">
-      <form onSubmit={lookup} className="scan-form">
+      <div className={"scanner-stage " + (focused ? "armed" : "")}>
+        <ScanLine size={52} strokeWidth={1.6} />
+        <strong>
+          {busy
+            ? "Buscando ticket…"
+            : focused
+              ? "Listo para escanear"
+              : "Activar lector"}
+        </strong>
+        <span>Escanea el código o escribe el folio</span>
+        {!focused && (
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => inputRef.current?.focus()}
+          >
+            <Focus size={20} />
+            Activar
+          </button>
+        )}
+      </div>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void lookup();
+        }}
+        className="scan-form"
+      >
         <label>
           Código o folio
           <input
+            ref={inputRef}
+            data-autofocus
             value={code}
             onChange={(event) => setCode(event.target.value)}
-            placeholder="Escanea o escribe aquí"
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            onKeyDown={(event) => {
+              if (
+                isScanTerminator(event.key) &&
+                event.currentTarget.value.trim()
+              ) {
+                event.preventDefault();
+                void lookup();
+              }
+            }}
+            placeholder="Código de barras o folio del ticket"
+            autoComplete="off"
+            spellCheck={false}
+            readOnly={busy}
             autoFocus
             required
-            maxLength={100}
+            maxLength={110}
           />
         </label>
         <button className="button primary" disabled={busy}>
-          {busy ? "Buscando…" : "Cargar"}
+          {busy ? "Buscando…" : "Buscar ticket"}
           <ArrowRight size={19} />
         </button>
       </form>
+      <p className="scanner-help">
+        Lector en modo teclado · Enter o Tab al terminar
+      </p>
       {error && (
         <div className="error" role="alert">
           {error}
@@ -593,7 +790,7 @@ export function TicketLookup({ onSelect }: { onSelect: (sale: Sale) => void }) {
       {sales?.length === 0 && (
         <div className="empty compact">
           <strong>No encontramos ese ticket</strong>
-          <p>Comprueba el folio. Puedes consultar tickets de ambos sistemas.</p>
+          <p>Comprueba el código o folio impreso.</p>
         </div>
       )}
       {sales && sales.length > 0 && (
@@ -659,83 +856,85 @@ export function MasterForm({
   }
   return (
     <form onSubmit={save}>
-      <fieldset className="modal-body form-stack" disabled={busy}>
-        <label>
-          Nombre
-          <input
-            name="name"
-            defaultValue={initial?.name || ""}
-            maxLength={160}
-            required
-            autoFocus
-          />
-        </label>
-        <div className="form-grid">
+      <div className="modal-body">
+        <fieldset className="form-stack" disabled={busy}>
           <label>
-            Teléfono <span className="optional">Opcional</span>
+            Nombre
             <input
-              name="phone"
-              defaultValue={initial?.phone || ""}
-              maxLength={40}
+              name="name"
+              defaultValue={initial?.name || ""}
+              maxLength={160}
+              required
+              autoFocus
             />
           </label>
-          {kind === "employee" ? (
+          <div className="form-grid">
             <label>
-              Puesto <span className="optional">Opcional</span>
+              Teléfono <span className="optional">Opcional</span>
               <input
-                name="position"
-                defaultValue={(initial as Employee)?.position || ""}
-                maxLength={100}
+                name="phone"
+                defaultValue={initial?.phone || ""}
+                maxLength={40}
               />
             </label>
-          ) : (
-            <label>
-              RFC <span className="optional">Opcional</span>
-              <input
-                name="tax_id"
-                defaultValue={supplier?.tax_id || ""}
-                maxLength={20}
-              />
-            </label>
-          )}
-        </div>
-        {kind === "supplier" && (
-          <>
-            <label>
-              Concepto habitual
-              <input
-                name="concept"
-                defaultValue={supplier?.concept || ""}
-                placeholder="Ej. Compra de llantas"
-                maxLength={300}
-              />
-            </label>
-            <div className="form-grid">
-              <Select
-                label="Tipo de movimiento habitual"
-                value={category}
-                onChange={setCategory}
-                options={expenseCategories}
-              />
-              <Select
-                label="Forma de pago habitual"
-                value={method}
-                onChange={setMethod}
-                options={methodOptions}
-              />
-            </div>
-            <p className="hint">
-              Estos datos se completan al seleccionar al proveedor en una
-              salida. El importe se captura en cada operación.
-            </p>
-          </>
-        )}
-        {error && (
-          <div className="error" role="alert">
-            {error}
+            {kind === "employee" ? (
+              <label>
+                Puesto <span className="optional">Opcional</span>
+                <input
+                  name="position"
+                  defaultValue={(initial as Employee)?.position || ""}
+                  maxLength={100}
+                />
+              </label>
+            ) : (
+              <label>
+                RFC <span className="optional">Opcional</span>
+                <input
+                  name="tax_id"
+                  defaultValue={supplier?.tax_id || ""}
+                  maxLength={20}
+                />
+              </label>
+            )}
           </div>
-        )}
-      </fieldset>
+          {kind === "supplier" && (
+            <>
+              <label>
+                Concepto habitual
+                <input
+                  name="concept"
+                  defaultValue={supplier?.concept || ""}
+                  placeholder="Ej. Compra de llantas"
+                  maxLength={300}
+                />
+              </label>
+              <div className="form-grid">
+                <Select
+                  label="Tipo de movimiento habitual"
+                  value={category}
+                  onChange={setCategory}
+                  options={expenseCategories}
+                />
+                <Select
+                  label="Forma de pago habitual"
+                  value={method}
+                  onChange={setMethod}
+                  options={methodOptions}
+                />
+              </div>
+              <p className="hint">
+                Estos datos se completan al seleccionar al proveedor en una
+                salida. El importe se captura en cada operación.
+              </p>
+            </>
+          )}
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
+        </fieldset>
+      </div>
       <Footer busy={busy} onClose={onClose} label="Guardar" />
     </form>
   );
@@ -767,101 +966,266 @@ export function PaymentForm({
         });
       }}
     >
-      <fieldset className="modal-body form-stack" disabled={busy}>
-        <div className="balance-callout">
-          <span>{movement.contact || movement.concept}</span>
-          <small>Saldo pendiente</small>
-          <strong className="number">
-            {money(movement.total_cents - movement.paid_cents)}
-          </strong>
-        </div>
-        <div className="form-grid">
-          <label>
-            Importe del abono ($)
-            <input
-              name="amount"
-              defaultValue={(
-                (movement.total_cents - movement.paid_cents) /
-                100
-              ).toFixed(2)}
-              inputMode="decimal"
-              required
-              autoFocus
-            />
-          </label>
-          <DatePicker label="Fecha del abono" value={date} onChange={setDate} />
-        </div>
-        <Select
-          label="Forma de pago"
-          value={method}
-          onChange={setMethod}
-          options={methodOptions}
-        />
-        <label>
-          Referencia <span className="optional">Opcional</span>
-          <input name="reference" maxLength={160} />
-        </label>
-        {error && (
-          <div className="error" role="alert">
-            {error}
+      <div className="modal-body">
+        <fieldset className="form-stack" disabled={busy}>
+          <div className="balance-callout">
+            <span>{movement.contact || movement.concept}</span>
+            <small>Saldo pendiente</small>
+            <strong className="number">
+              {money(movement.total_cents - movement.paid_cents)}
+            </strong>
           </div>
-        )}
-      </fieldset>
+          <div className="form-grid">
+            <label>
+              Importe del abono ($)
+              <input
+                name="amount"
+                defaultValue={(
+                  (movement.total_cents - movement.paid_cents) /
+                  100
+                ).toFixed(2)}
+                inputMode="decimal"
+                required
+                autoFocus
+              />
+            </label>
+            <DatePicker
+              label="Fecha del abono"
+              value={date}
+              onChange={setDate}
+            />
+          </div>
+          <Select
+            label="Forma de pago"
+            value={method}
+            onChange={setMethod}
+            options={methodOptions}
+          />
+          <label>
+            Referencia <span className="optional">Opcional</span>
+            <input name="reference" maxLength={160} />
+          </label>
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
+        </fieldset>
+      </div>
       <Footer busy={busy} onClose={onClose} label="Guardar" />
     </form>
   );
 }
 
-export function CommissionForm({
-  movement,
-  employees,
+export function PreferenceForm({
+  rateBps,
   write,
   onDone,
   onClose,
 }: {
-  movement: Movement;
-  employees: Employee[];
+  rateBps: number | null;
   write: Write;
   onDone: () => void;
   onClose: () => void;
 }) {
-  const [commission, setCommission] = useState<{
-    employeeId: string;
-    mode: string;
-    value: string;
-  } | null>({ employeeId: "", mode: "fixed", value: "" });
+  const [value, setValue] = useState(
+    rateBps === null ? "" : String(rateBps / 100),
+  );
   const { busy, error, submit } = useSubmit(write, onDone);
   return (
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        if (commission)
-          void submit("commission.create", {
-            movementId: movement.id,
-            commission,
-          });
+        void submit("preferences.save", { rate: value.trim() ? value : null });
       }}
     >
-      <fieldset className="modal-body form-stack" disabled={busy}>
-        <div className="form-total">
-          <span>Total de la entrada</span>
-          <strong className="number">{money(movement.total_cents)}</strong>
-        </div>
-        <CommissionFields
-          employees={employees}
-          value={commission}
-          onChange={setCommission}
-        />
-        {error && (
-          <div className="error" role="alert">
-            {error}
+      <div className="modal-body">
+        <fieldset className="form-stack" disabled={busy}>
+          <label>
+            Porcentaje sugerido (%)
+            <input
+              inputMode="decimal"
+              autoFocus
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              placeholder="Sin sugerencia"
+            />
+          </label>
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
+        </fieldset>
+      </div>
+      <Footer busy={busy} onClose={onClose} label="Guardar preferencia" />
+    </form>
+  );
+}
+
+export function PayoutForm({
+  employees,
+  initialEmployeeId,
+  initialPeriod,
+  initialAnchor,
+  write,
+  onDone,
+  onClose,
+}: {
+  employees: Employee[];
+  initialEmployeeId?: string;
+  initialPeriod: string;
+  initialAnchor: string;
+  write: Write;
+  onDone: () => void;
+  onClose: () => void;
+}) {
+  const [employeeId, setEmployeeId] = useState(initialEmployeeId || ""),
+    [period, setPeriod] = useState(initialPeriod),
+    [anchor, setAnchor] = useState(initialAnchor),
+    [paidOn, setPaidOn] = useState(businessToday());
+  const [preview, setPreview] = useState<PayoutPreview | null>(null),
+    [loading, setLoading] = useState(false),
+    [loadError, setLoadError] = useState(""),
+    [revision, setRevision] = useState(0);
+  const { busy, error, submit } = useSubmit(write, onDone);
+  const range = periodRange(period, anchor);
+  useEffect(() => {
+    setPreview(null);
+    setLoadError("");
+    if (!employeeId) return;
+    const controller = new AbortController();
+    setLoading(true);
+    const params = new URLSearchParams({
+      payout: "1",
+      employeeId,
+      period,
+      anchor,
+    });
+    void fetch("/api/admin?" + params, { signal: controller.signal })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw Error(result.error);
+        setPreview(result);
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") setLoadError(err.message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [employeeId, period, anchor, revision]);
+  const current =
+    preview?.employeeId === employeeId &&
+    preview.from === range.from &&
+    preview.to === range.to
+      ? preview
+      : null;
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!current?.commissions.length || loading) return;
+        void submit("commission.batchPay", {
+          employeeId,
+          period,
+          anchor,
+          paidOn,
+          commissionIds: current.commissions.map((c) => c.id),
+          expectedTotalCents: current.totalCents,
+        });
+      }}
+    >
+      <div className="modal-body">
+        <fieldset className="form-stack" disabled={busy}>
+          <Select
+            label="Empleado"
+            value={employeeId}
+            options={[
+              { value: "", label: "Seleccionar empleado" },
+              ...employees.map((e) => ({
+                value: e.id,
+                label: e.name + (e.active ? "" : " (eliminado)"),
+              })),
+            ]}
+            onChange={setEmployeeId}
+          />
+          <div className="form-grid">
+            <Select
+              label="Periodo"
+              value={period}
+              onChange={setPeriod}
+              options={[
+                { value: "day", label: "Día" },
+                { value: "week", label: "Semana" },
+                { value: "month", label: "Mes" },
+              ]}
+            />
+            <DatePicker
+              label="Fecha del periodo"
+              value={anchor}
+              onChange={setAnchor}
+            />
           </div>
-        )}
-      </fieldset>
+          <div className="payout-summary">
+            <Wallet size={30} />
+            <div>
+              <span>
+                {shortDate(range.from)}
+                {range.from !== range.to ? " — " + shortDate(range.to) : ""}
+              </span>
+              <strong className="number">
+                {loading ? "…" : money(current?.totalCents || 0)}
+              </strong>
+              <small>
+                {current?.commissions.length || 0} comisiones pendientes
+              </small>
+            </div>
+          </div>
+          {loading && <p role="status">Consultando comisiones…</p>}
+          {current && (
+            <div className="payout-lines">
+              {current.commissions.map((c) => (
+                <div key={c.id}>
+                  <span>
+                    <strong>{c.source_folio || c.concept}</strong>
+                    <small>{shortDate(c.date)}</small>
+                  </span>
+                  <strong className="number">{money(c.amount_cents)}</strong>
+                </div>
+              ))}
+              {!current.commissions.length && (
+                <div className="empty compact">Todo pagado en este periodo</div>
+              )}
+            </div>
+          )}
+          {!!current?.commissions.length && (
+            <DatePicker
+              label="Fecha de pago"
+              value={paidOn}
+              onChange={setPaidOn}
+            />
+          )}
+          {(error || loadError) && (
+            <div className="error" role="alert">
+              {error || loadError}
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setRevision((n) => n + 1)}
+              >
+                Actualizar pendientes
+              </button>
+            </div>
+          )}
+        </fieldset>
+      </div>
       <Footer
-        busy={busy || !commission}
+        busy={busy}
+        submitDisabled={loading || !current?.commissions.length}
         onClose={onClose}
-        label="Guardar comisión"
+        label={"Pagar " + money(current?.totalCents || 0)}
       />
     </form>
   );
@@ -893,27 +1257,29 @@ export function ConfirmForm({
         });
       }}
     >
-      <fieldset className="modal-body form-stack" disabled={busy}>
-        {action === "commission.pay" ? (
-          <DatePicker label="Fecha de pago" value={date} onChange={setDate} />
-        ) : (
-          <label>
-            Motivo
-            <textarea
-              name="reason"
-              maxLength={500}
-              required
-              autoFocus
-              rows={3}
-            />
-          </label>
-        )}
-        {error && (
-          <div className="error" role="alert">
-            {error}
-          </div>
-        )}
-      </fieldset>
+      <div className="modal-body">
+        <fieldset className="form-stack" disabled={busy}>
+          {action === "commission.pay" ? (
+            <DatePicker label="Fecha de pago" value={date} onChange={setDate} />
+          ) : (
+            <label>
+              Motivo
+              <textarea
+                name="reason"
+                maxLength={500}
+                required
+                autoFocus
+                rows={3}
+              />
+            </label>
+          )}
+          {error && (
+            <div className="error" role="alert">
+              {error}
+            </div>
+          )}
+        </fieldset>
+      </div>
       <Footer
         busy={busy}
         onClose={onClose}
@@ -927,13 +1293,11 @@ export function DetailView({
   movement,
   payments,
   onPayment,
-  onCommission,
   onVoid,
 }: {
   movement: Movement;
   payments: Payment[];
   onPayment: () => void;
-  onCommission: () => void;
   onVoid: () => void;
 }) {
   const inactive = movement.source_cancelled || !!movement.voided_at;
@@ -963,7 +1327,9 @@ export function DetailView({
           <dd>
             {movement.source_folio
               ? `${movement.source_folio} · Sistema ${movement.source_origin === "blanca" ? "blanco" : "negro"}`
-              : "Registro manual"}
+              : movement.manual_folio
+                ? `${movement.manual_folio} · Registro manual${movement.manual_origin === "manual" ? "" : " · Sistema " + (movement.manual_origin === "blanca" ? "blanco" : "negro")}`
+                : "Registro manual"}
           </dd>
         </div>
         <div>
@@ -989,6 +1355,12 @@ export function DetailView({
               LLA1:{movement.source_kind === "ventas" ? "V" : "P"}:
               {movement.source_id}
             </dd>
+          </div>
+        )}
+        {movement.manual_ticket_code && (
+          <div className="wide">
+            <dt>ID del ticket</dt>
+            <dd className="ticket-id">{movement.manual_ticket_code}</dd>
           </div>
         )}
       </dl>
@@ -1058,11 +1430,6 @@ export function DetailView({
               {movement.kind === "entrada"
                 ? "Registrar cobro"
                 : "Registrar pago"}
-            </button>
-          )}
-          {movement.kind === "entrada" && !movement.commission_id && (
-            <button className="button secondary" onClick={onCommission}>
-              Agregar comisión
             </button>
           )}
           <button className="text-button danger" onClick={onVoid}>

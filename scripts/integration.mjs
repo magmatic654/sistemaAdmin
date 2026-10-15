@@ -692,14 +692,32 @@ try {
       /ya está registrado/,
     );
   });
-  await test("a manual entry racing a scan still creates exactly one record for the same ticket",async()=>{
-    const sourceId=await ticket(),[sale]=await lookupSales("LLA1:V:"+sourceId);
-    const scanned={...input,ticketCode:"LLA1:V:"+sourceId,commission:null};
-    const manual={...input,manual:true,folio:sale.folio,origin:sale.origin,manualTicketCode:"LLA1:V:"+sourceId,commission:null};
-    const result=await Promise.allSettled([run("movement.create",manual),run("movement.create",scanned)]);
-    assert.equal(result.filter(r=>r.status==="fulfilled").length,1);
-    const records=await connection.query("SELECT id FROM administracion.movements WHERE source_id=$1 OR manual_ticket_code=$2",[sourceId,"LLA1:V:"+sourceId]);
-    assert.equal(records.rows.length,1);
+  await test("a manual entry racing a scan still creates exactly one record for the same ticket", async () => {
+    const sourceId = await ticket(),
+      [sale] = await lookupSales("LLA1:V:" + sourceId);
+    const scanned = {
+      ...input,
+      ticketCode: "LLA1:V:" + sourceId,
+      commission: null,
+    };
+    const manual = {
+      ...input,
+      manual: true,
+      folio: sale.folio,
+      origin: sale.origin,
+      manualTicketCode: "LLA1:V:" + sourceId,
+      commission: null,
+    };
+    const result = await Promise.allSettled([
+      run("movement.create", manual),
+      run("movement.create", scanned),
+    ]);
+    assert.equal(result.filter((r) => r.status === "fulfilled").length, 1);
+    const records = await connection.query(
+      "SELECT id FROM administracion.movements WHERE source_id=$1 OR manual_ticket_code=$2",
+      [sourceId, "LLA1:V:" + sourceId],
+    );
+    assert.equal(records.rows.length, 1);
   });
   if (process.argv.includes("--keep")) {
     await fs.mkdir(new URL("../.local/", import.meta.url), { recursive: true });

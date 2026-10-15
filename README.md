@@ -10,7 +10,7 @@ No incluye inicio de sesión.
 - **Resumen:** ganancias, cobros, historial de ventas/salidas y pagos pendientes
   a proveedores y empleados.
 - **Empleados:** agregar, editar, eliminar/restaurar y consultar comisiones por
-  día, semana o mes. Pulsar el nombre abre su detalle.
+  día, semana o mes. Liquidar juntos los pendientes del empleado y periodo elegidos.
 
 Fondo blanco, texto grande y controles accesibles. Los proveedores se recuerdan
 al confirmar una salida y completan el concepto y el pago de capturas futuras.
@@ -19,11 +19,19 @@ al confirmar una salida y completan el concepto y el pago de capturas futuras.
 
 Las ventas de los otros sistemas nunca se cargan ni suman automáticamente.
 Escanear sólo prerrellena el formulario; el administrador debe guardar para
-registrar. La captura manual también exige ID, folio o código de ticket.
+registrar. **Nueva venta** abre un formulario manual con folio obligatorio e ID
+impreso opcional. Funciona aunque la venta no exista en los otros sistemas;
+requiere que la base de Administración esté disponible. **Escanear ticket** busca
+el documento existente y recupera fecha, folio, cliente, teléfono, partidas,
+subtotal, IVA, total y forma de pago. Sólo la confirmación crea el registro.
 
 El servidor resuelve la identidad canónica y PostgreSQL exige UNIQUE(tabla, id).
-Otro folio, formato del ID, sesión, reintento o guardado simultáneo no duplica
-la venta. Anular el registro conserva la identidad ocupada y su historial.
+La captura manual conserva folio, origen (negro/blanco/sin sistema) e ID disponible.
+Bloqueos transaccionales e índices impiden repetir esos identificadores, incluso
+en guardados simultáneos o al escanear más tarde un ticket capturado manualmente.
+Sin sistema reserva ese folio frente a ambos orígenes. Un folio debe copiarse
+correctamente: sin ID no es posible reconocer el mismo papel bajo otro folio.
+Anular conserva los identificadores ocupados y el historial.
 
 El código impreso incluye versión, tabla e ID:
 
@@ -34,7 +42,9 @@ LLA1:P:<id>  # ventas_productos: módulo de productos negro
 
 Los cambios de tickets están en `sistema-administracion` de ambos sistemas.
 Reimprimir conserva el mismo código. El lector debe emular un teclado y terminar
-con Enter. Los tickets anteriores pueden buscarse por folio o ID; si el folio
+con Enter o Tab. Se controla el foco, se admite el prefijo AIM `]C0` de CODE128
+y nunca se confirma una venta mediante el fin del escaneo. Los tickets anteriores
+pueden buscarse por folio o ID; si el folio
 es ambiguo, se debe usar la identidad completa.
 
 Las consultas externas se limitan a la búsqueda y validación explícita del ticket.
@@ -66,8 +76,14 @@ registro original y no crean otra compra, gasto o venta. Los importes usan centa
 Las fechas comerciales corresponden a Ciudad de México; las semanas comienzan
 el lunes. No se inventan costos de inventario ni se calcula utilidad fiscal.
 
-Cada entrada tiene una sola comisión opcional y un único empleado. Dar de baja
-al empleado conserva su historial. Un pago de comisión se registra una sola vez.
+Cada entrada tiene una sola comisión opcional y un único empleado, asignados
+antes de confirmar la venta. El administrador puede guardar un porcentaje
+sugerido; el importe y porcentaje elegidos quedan fijados en cada comisión.
+Dar de baja al empleado conserva su historial y permite pagar deudas anteriores.
+La liquidación agrupa únicamente las comisiones pendientes revisadas por empleado
+y periodo. Guarda un comprobante interno y se confirma de forma atómica:
+si otro pago se adelanta, se rechaza el grupo y se pide actualizar. Un trigger
+impide modificar o reabrir una comisión pagada. Los reintentos devuelven el mismo pago.
 Las operaciones y reintentos se confirman junto con su resultado durable, y los
 bloqueos de fila impiden abonos simultáneos por encima del saldo.
 
@@ -89,9 +105,12 @@ pruebas reales y elimina únicamente ese clon. Si ya existe, se detiene sin
 sobrescribirlo. No añade fixtures a la base de desarrollo ni a producción.
 `--keep` permite retener el clon para QA y escribe `.local/test.env`, ignorado por Git.
 Las pruebas del contrato de impresión se ejecutan con `npm run test:ticket-barcodes`
-en ambos repositorios de ventas. La impresora y el lector físicos deben probarse
+en ambos repositorios de ventas: un decodificador independiente lee las imágenes
+CODE128 renderizadas a 203 y 300 dpi. La impresora y el lector físicos deben probarse
 con un ticket real antes del uso operativo.
 
 Las migraciones son aditivas y transaccionales. No se aplicaron a producción ni
 se desplegó la aplicación. El código de la app nunca ejecuta migraciones desde
 una petición.
+
+Configuración del lector y comprobación física: [guía de tickets](docs/scanner.md).

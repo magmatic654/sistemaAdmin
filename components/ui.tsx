@@ -273,7 +273,13 @@ export function Modal({
     const previous = document.activeElement as HTMLElement;
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    ref.current?.querySelector<HTMLElement>("input,button")?.focus();
+    (
+      ref.current?.querySelector<HTMLElement>("[data-autofocus]") ||
+      ref.current?.querySelector<HTMLElement>(
+        ".modal-body input:not([disabled]),.modal-body button:not([disabled]),.modal-body textarea:not([disabled])",
+      ) ||
+      ref.current?.querySelector<HTMLElement>("button")
+    )?.focus();
     return () => {
       document.body.style.overflow = overflow;
       previous?.focus();

@@ -13,6 +13,9 @@ import {
   Users,
   Wallet,
   X,
+  BadgePercent,
+  ReceiptText,
+  Banknote,
 } from "lucide-react";
 import type {
   AdminState,
@@ -22,9 +25,10 @@ import type {
   Sale,
 } from "@/lib/types";
 import { periodRange } from "@/lib/domain";
-import { DatePicker, Modal, money, shortDate } from "./ui";
+import { DatePicker, Modal, Select, money, shortDate } from "./ui";
 import {
-  CommissionForm,
+  PayoutForm,
+  PreferenceForm,
   ConfirmForm,
   DetailView,
   MasterForm,
@@ -44,8 +48,8 @@ type Dialog = {
     | "employee"
     | "detail"
     | "payment"
-    | "commission"
-    | "commissionPay"
+    | "payout"
+    | "preference"
     | "void";
   source?: Sale;
   initial?: Employee;
@@ -345,7 +349,10 @@ export default function Dashboard({ today }: { today: string }) {
                     ) : (
                       <button
                         className="icon-button"
-                        aria-label={"Ver " + (m.source_folio || m.concept)}
+                        aria-label={
+                          "Ver " +
+                          (m.source_folio || m.manual_folio || m.concept)
+                        }
                         onClick={() => void detail(m)}
                       >
                         <ChevronRight size={22} />
@@ -428,12 +435,12 @@ export default function Dashboard({ today }: { today: string }) {
                   <td>
                     {!c.paid_on && (
                       <button
-                        className="button small secondary"
+                        className="text-button"
                         onClick={() =>
-                          setDialog({ type: "commissionPay", id: c.id })
+                          setDialog({ type: "payout", id: c.employee_id })
                         }
                       >
-                        Pagar
+                        Liquidar empleado
                       </button>
                     )}
                   </td>
@@ -455,15 +462,22 @@ export default function Dashboard({ today }: { today: string }) {
         employee: dialog.initial ? "Editar empleado" : "Nuevo empleado",
         detail: "Detalle",
         payment: "Registrar pago",
-        commission: "Comisión",
-        commissionPay: "Pagar comisión",
+        payout: "Liquidar comisiones",
+        preference: "Comisión sugerida",
         void: "Anular registro",
       }[dialog.type]
     : "";
   return (
     <div className="application">
       <header className="app-header">
-        <div className="app-brand">Administración</div>
+        <div className="app-brand">
+          <span className="brand-mark">
+            <ReceiptText size={25} />
+          </span>
+          <span>
+            <small>LLANTERA</small>Administración
+          </span>
+        </div>
         <nav aria-label="Secciones">
           {sections.map((item) => (
             <button
@@ -495,13 +509,27 @@ export default function Dashboard({ today }: { today: string }) {
                 : "Gestión de empleados"}
           </h1>
           {section === "empleados" && (
-            <button
-              className="button primary"
-              onClick={() => setDialog({ type: "employee" })}
-            >
-              <Plus size={22} />
-              Agregar empleado
-            </button>
+            <div className="heading-actions">
+              <button
+                className="button secondary"
+                onClick={() => setDialog({ type: "preference" })}
+              >
+                <BadgePercent size={22} />
+                {data?.commissionRateBps
+                  ? data.commissionRateBps / 100 + "% sugerido"
+                  : "Comisión sugerida"}
+              </button>
+              <button
+                className="button primary"
+                onClick={() => setDialog({ type: "employee" })}
+              >
+                <Plus size={22} />
+                Agregar empleado
+              </button>
+            </div>
+          )}
+          {section === "registro" && (
+            <span className="date-stamp">{shortDate(today)}</span>
           )}
         </div>
         {error && (
@@ -518,32 +546,63 @@ export default function Dashboard({ today }: { today: string }) {
         {section === "registro" && (
           <div className="registration-actions">
             <button
-              className="registration-card"
+              className="registration-card income-card"
               disabled={!data}
               onClick={() => setDialog({ type: "entrada" })}
             >
-              <ArrowDownLeft size={42} />
-              <span>Nueva venta</span>
-              <Plus size={24} />
+              <span className="action-icon">
+                <ArrowDownLeft size={38} />
+              </span>
+              <span>
+                <small>ENTRADAS</small>Nueva venta
+              </span>
+              <ArrowUpRight size={26} />
             </button>
             <button
-              className="registration-card"
+              className="registration-card expense-card"
               disabled={!data}
               onClick={() => setDialog({ type: "salida" })}
             >
-              <ArrowUpRight size={42} />
-              <span>Nueva salida</span>
-              <Plus size={24} />
+              <span className="action-icon">
+                <ArrowUpRight size={38} />
+              </span>
+              <span>
+                <small>SALIDAS</small>Nuevo gasto
+              </span>
+              <Plus size={26} />
             </button>
             <button
               className="registration-card scan-card"
               disabled={!data}
               onClick={() => setDialog({ type: "ticket" })}
             >
-              <ScanLine size={42} />
-              <span>Escanear ticket</span>
+              <span className="scan-symbol">
+                <ScanLine size={40} />
+              </span>
+              <span>
+                Escanear ticket<small>Escanear · Revisar · Confirmar</small>
+              </span>
               <ChevronRight size={24} />
             </button>
+            <div className="registration-links">
+              <button
+                className="text-button"
+                onClick={() => navigate("resumen")}
+              >
+                <ReceiptText size={21} />
+                Ver movimientos
+                <ChevronRight size={18} />
+              </button>
+              <button
+                className="text-button"
+                disabled={!data}
+                onClick={() => setDialog({ type: "payout" })}
+              >
+                <Banknote size={22} />
+                Liquidar comisiones
+                <ChevronRight size={18} />
+              </button>
+            </div>
           </div>
         )}
         {section !== "registro" && periodControls()}
@@ -570,14 +629,14 @@ export default function Dashboard({ today }: { today: string }) {
                         {money(summary!.profit)}
                       </strong>
                     </div>
-                    <div className="summary-card">
+                    <div className="summary-card collected">
                       <span>Cobrado</span>
                       <strong className="number">
                         {money(summary!.collected)}
                       </strong>
                     </div>
                     <button
-                      className="summary-card"
+                      className="summary-card supplier-due"
                       onClick={() => choosePanel("proveedores")}
                     >
                       <span>Por pagar a proveedores</span>
@@ -586,7 +645,7 @@ export default function Dashboard({ today }: { today: string }) {
                       </strong>
                     </button>
                     <button
-                      className="summary-card"
+                      className="summary-card employee-due"
                       onClick={() => choosePanel("comisiones")}
                     >
                       <span>Comisiones por pagar</span>
@@ -619,6 +678,28 @@ export default function Dashboard({ today }: { today: string }) {
               {section === "empleados" && (
                 <>
                   <div className="employee-toolbar">
+                    <Select
+                      label="Ver comisiones de"
+                      value={employeeId}
+                      onChange={setEmployeeId}
+                      options={[
+                        { value: "", label: "Todos los empleados" },
+                        ...employees.map((e) => ({
+                          value: e.id,
+                          label: e.name,
+                        })),
+                      ]}
+                    />
+                    <button
+                      className="button primary payout-button"
+                      disabled={!data.employees.length}
+                      onClick={() =>
+                        setDialog({ type: "payout", id: employeeId })
+                      }
+                    >
+                      <Banknote size={22} />
+                      Liquidar comisiones
+                    </button>
                     <label className="check-label">
                       <input
                         type="checkbox"
@@ -766,6 +847,7 @@ export default function Dashboard({ today }: { today: string }) {
               employees={data.employees}
               suppliers={data.suppliers}
               providerNames={[]}
+              defaultRateBps={data.commissionRateBps}
               write={write}
               onDone={saved}
               onClose={() => setDialog(null)}
@@ -790,7 +872,6 @@ export default function Dashboard({ today }: { today: string }) {
               movement={dialog.movement}
               payments={dialog.payments || []}
               onPayment={() => setDialog({ ...dialog, type: "payment" })}
-              onCommission={() => setDialog({ ...dialog, type: "commission" })}
               onVoid={() =>
                 setDialog({ ...dialog, type: "void", id: dialog.movement!.id })
               }
@@ -804,22 +885,31 @@ export default function Dashboard({ today }: { today: string }) {
               onClose={() => setDialog(null)}
             />
           )}
-          {dialog.type === "commission" && dialog.movement && (
-            <CommissionForm
-              movement={dialog.movement}
+          {dialog.type === "payout" && (
+            <PayoutForm
               employees={data.employees}
+              initialEmployeeId={dialog.id}
+              initialPeriod={period}
+              initialAnchor={anchor}
+              write={write}
+              onDone={() => {
+                saved();
+                setToast("Comisiones pagadas");
+              }}
+              onClose={() => setDialog(null)}
+            />
+          )}
+          {dialog.type === "preference" && (
+            <PreferenceForm
+              rateBps={data.commissionRateBps}
               write={write}
               onDone={saved}
               onClose={() => setDialog(null)}
             />
           )}
-          {(dialog.type === "commissionPay" || dialog.type === "void") && (
+          {dialog.type === "void" && (
             <ConfirmForm
-              action={
-                dialog.type === "commissionPay"
-                  ? "commission.pay"
-                  : "movement.void"
-              }
+              action="movement.void"
               entityId={dialog.id!}
               write={write}
               onDone={saved}
