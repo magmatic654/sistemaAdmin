@@ -7,17 +7,22 @@ Consulta la base de `sistemaBodega` y `llaneteramulti` con una conexión de sól
 ## Secciones
 
 - **Registro:** nueva venta, nueva salida y lectura de tickets.
-- **Resumen:** selector Ver para consultar una tarea a la vez: Ganancia (ventas menos
-  gastos y comisiones), Pagos pendientes, Historial o Ventas por revisar. Pagos y
-  revisión incluyen todas las fechas; sólo ganancia e historial usan el periodo elegido.
+- **Ganancia:** ventas confirmadas menos gastos y comisiones del periodo.
+- **Pagos pendientes:** deudas de todas las fechas, agrupadas por empleado o proveedor.
+- **Historial:** ventas, gastos y comisiones del periodo elegido.
+- **Ventas por revisar:** capturas manuales pendientes de todas las fechas.
 - **Empleados:** agregar, editar, eliminar/restaurar y consultar comisiones por
   día, semana, mes o rango personalizado. Liquidar un periodo o todas las pendientes
   del empleado, sin límite de mes.
 
 Un selector reúne Hoy, Esta semana, Este mes y Rango personalizado; las flechas
 consultan periodos anteriores y Volver a hoy recupera el día actual. Sólo el rango
-personalizado solicita fecha inicial y final. Empleados conserva su propio periodo.
+personalizado solicita fecha inicial y final. Ganancia, Historial y Empleados
+conservan sus propios periodos.
 Los pagos se agrupan por empleado y las confirmaciones permanecen hasta cerrarlas.
+Todos los apartados se abren en un clic desde la barra lateral o la cuadrícula móvil.
+Cada uno conserva su dirección al recargar y admite Atrás/Adelante. Los enlaces
+antiguos a `?seccion=resumen` abren Ganancia.
 
 Fondo blanco, texto grande y controles accesibles. Los proveedores se recuerdan
 al confirmar una salida y completan el concepto y el pago de capturas futuras.

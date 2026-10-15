@@ -1,6 +1,8 @@
 # Reglas del proyecto
 
-- Mantener sólo tres secciones principales: Registro, Resumen y Empleados.
+- Ofrecer accesos directos visibles a Registro, Ganancia, Pagos pendientes,
+  Historial, Ventas por revisar y Empleados. No agruparlos bajo Resumen ni un selector Ver.
+  Cada espacio tiene su URL; conservar ?seccion=resumen como alias de Ganancia.
 - No implementar inicio de sesión mientras el propietario no lo solicite.
 - Fondo blanco, letra grande y mínimo texto. En el desglose de ganancia, usar sólo
   texto verde para ventas/ganancia positiva y rojo para gastos/comisiones/pérdida.
@@ -28,13 +30,14 @@
 - En Empleados, separar por pagar (autorizadas e impagadas), pagadas y por revisar;
   nunca sumar las congeladas al importe por pagar ni presentarlas como pérdidas.
 - Ocultar la franja de ventas por revisar si el periodo no contiene pendientes.
-  En Resumen, destacar ganancia grande y agrupar ventas, gastos y comisiones como
+  En Ganancia, destacar la cifra grande y agrupar ventas, gastos y comisiones como
   detalles pequeños a su lado; en móvil, ganancia primero y detalles debajo.
-- Resumen muestra una tarea a la vez mediante Ver: Ganancia, Pagos pendientes,
-  Historial y Ventas por revisar (sólo si hay pendientes o se está consultando esa cola).
-  No apilar las cuatro vistas. Pagos y revisión abarcan todas las fechas y no muestran
-  filtros de periodo; ganancia e historial comparten su periodo. Empleados conserva
-  una selección independiente. Agrupar pagos de comisiones por empleado.
+- Mostrar una tarea a la vez, accesible en un clic desde la navegación. En escritorio
+  usar una barra lateral y en móvil una cuadrícula de accesos visibles sin scroll X.
+  Ventas por revisar conserva su posición aunque esté vacía, con contador sólo si hay
+  pendientes. Pagos y revisión abarcan todas las fechas sin filtros de periodo.
+  Ganancia, Historial y Empleados conservan periodos independientes. Agrupar pagos
+  de comisiones por empleado. Admitir enlaces directos, recarga y Atrás/Adelante.
 - Usar un único selector de periodo con flechas cercanas y Volver a hoy para consultas
   históricas. Al elegir Hoy/Esta semana/Este mes, partir de la fecha comercial actual.
   Mantener navegación con áreas de 48 × 48 px y acciones principales de al menos 48 px de alto;

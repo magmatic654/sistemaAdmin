@@ -3539,8 +3539,8 @@ th {
   }
 }
 
-/* One task at a time: results, outstanding payments, or records. */
-.summary-workspace {
+/* Filters belong only to the task currently open. */
+.workspace-filters {
   display: flex;
   flex-wrap: wrap;
   gap: 12px 24px;
@@ -3550,7 +3550,7 @@ th {
 .review-shortcut {
   min-height: 48px;
 }
-.summary-workspace > .choice,
+.workspace-filters > .choice,
 .period-selector > .choice {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -3559,13 +3559,13 @@ th {
   flex: 0 1 340px;
   min-width: 0;
 }
-.summary-workspace .field-label,
+.workspace-filters .field-label,
 .period-selector > .choice .field-label {
   margin: 0;
   color: var(--secondary);
   font-size: 16px;
 }
-.summary-workspace .choice-trigger,
+.workspace-filters .choice-trigger,
 .period-selector > .choice .choice-trigger {
   min-height: 52px;
   padding-block: 10px;
@@ -3680,11 +3680,11 @@ th {
     margin-bottom: 16px;
     align-items: center;
   }
-  .summary-workspace {
+  .workspace-filters {
     gap: 12px;
     margin-bottom: 12px;
   }
-  .summary-workspace > .choice,
+  .workspace-filters > .choice,
   .period-selector > .choice {
     flex-basis: 100%;
     width: 100%;
@@ -3742,6 +3742,196 @@ th {
   }
   .employee-payment-row > strong {
     text-align: left;
+  }
+}
+
+/* Every everyday task is visible and opens directly, without a view menu. */
+.direct-navigation {
+  display: grid;
+  grid-template-columns: 256px minmax(0, 1fr);
+  min-height: 100dvh;
+}
+.direct-navigation .app-header {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  align-self: start;
+  gap: 28px;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  padding: 24px 16px;
+  border: 0;
+  border-right: 1px solid var(--rule);
+  overflow-y: auto;
+}
+.direct-navigation .app-brand {
+  min-width: 0;
+  min-height: 48px;
+  gap: 8px;
+  font-size: 20px;
+}
+.direct-navigation .brand-mark {
+  width: 38px;
+  height: 40px;
+}
+.direct-navigation .app-header nav {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  gap: 8px;
+}
+.direct-navigation .app-header nav a {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 64px;
+  padding: 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--secondary);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.3;
+  text-decoration: none;
+}
+.direct-navigation .app-header nav a > svg {
+  flex: none;
+}
+.direct-navigation .app-header nav a > span:not(.navigation-count) {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: manual;
+}
+.direct-navigation .app-header nav a.active {
+  border-color: var(--rule);
+  background: var(--rule-soft);
+  color: var(--ink);
+  font-weight: 650;
+}
+.direct-navigation .app-header nav a:hover {
+  background: var(--rule-soft);
+  color: var(--ink);
+}
+.direct-navigation .app-header nav a:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.direct-navigation .navigation-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 24px;
+  min-height: 24px;
+  margin-left: auto;
+  padding: 2px 5px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.direct-navigation .app-header > .icon-button {
+  flex: none;
+  align-self: start;
+  margin-top: auto;
+}
+.direct-navigation .main-content {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 40px 32px 64px;
+}
+@media (max-width: 1099px) {
+  .direct-navigation {
+    display: block;
+  }
+  .direct-navigation .app-header {
+    position: static;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    height: auto;
+    padding: 12px 20px 16px;
+    gap: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+    overflow: visible;
+  }
+  .direct-navigation .app-header > .icon-button {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: center;
+    margin: 0;
+  }
+  .direct-navigation .app-header nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .direct-navigation .app-header nav a {
+    flex-direction: column;
+    justify-content: center;
+    min-height: 72px;
+    padding: 8px 6px;
+    gap: 4px;
+    font-size: 16px;
+    text-align: center;
+  }
+  .direct-navigation .navigation-count {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    min-width: 20px;
+    min-height: 20px;
+    padding: 2px 4px;
+    font-size: 12px;
+  }
+  .direct-navigation .main-content {
+    padding: 28px 24px 48px;
+  }
+}
+@media (max-width: 760px) {
+  .direct-navigation .app-header {
+    padding: 12px 16px;
+    gap: 8px;
+  }
+  .direct-navigation .main-content {
+    padding: 20px 16px 40px;
+  }
+}
+@media (max-width: 480px) {
+  .direct-navigation .app-header nav {
+    margin: 0;
+  }
+  .direct-navigation .app-header nav a > svg {
+    display: none;
+  }
+  .direct-navigation .app-header nav a {
+    min-height: 64px;
+    padding-block: 6px;
+    padding-inline: 2px;
+  }
+  .direct-navigation .app-header nav a:has(.navigation-count) {
+    padding-top: 22px;
+  }
+}
+@media (max-width: 360px) {
+  .direct-navigation .app-header {
+    padding-inline: 8px;
   }
 }
 @media (max-width: 480px) {

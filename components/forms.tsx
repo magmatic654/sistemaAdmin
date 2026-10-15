@@ -1321,7 +1321,7 @@ export function SaleReviewForm({
               </button>
             </div>
             <p className="review-replacement-note">
-              Confirma lo capturado para incluir esta venta en el Resumen.
+                Confirma lo capturado para incluir esta venta en la ganancia.
             </p>
           </>
         )}

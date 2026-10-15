@@ -2,12 +2,16 @@
 
 El administrador revisa tickets de empleados, registra ventas y gastos y liquida
 comisiones. La pantalla debe sentirse como una mesa de control: cifras legibles,
-folios verificables y acciones claras. Tres secciones, sin login ni gráficas.
+folios verificables y acciones claras. Seis destinos directos: Registro, Ganancia,
+Pagos pendientes, Historial, Ventas por revisar y Empleados. Sin login ni gráficas.
+La barra lateral de escritorio y la cuadrícula móvil muestran todos los destinos;
+no hay selector Ver ni menús para buscar cada tarea. Las direcciones permiten
+recargar, compartir un apartado y usar Atrás/Adelante. Resumen conserva un alias a Ganancia.
 
-Papel blanco puro, texto oscuro y bordes grises. La cifra de ganancia usa verde
-cuando es positiva, rojo cuando hay pérdida y tono neutro cuando es cero. El resto
-de importes, revisiones, formularios y acciones usa la misma paleta neutra. Errores
-y acciones destructivas conservan rojo. Sin colores por categoría, degradados ni dibujos.
+Papel blanco puro, texto oscuro y bordes grises. Los textos de ventas/ganancia positiva
+usan verde y los de gastos/comisiones/pérdidas usan rojo dentro del cálculo. Cero,
+revisiones y comisiones congeladas quedan neutros. Errores y acciones destructivas
+conservan rojo. No hay símbolos de cálculo, fondos de color, degradados ni dibujos.
 
 Segoe UI, base 18px, títulos de 30–34px, cifras tabulares, controles de al menos
 52px y espacios en múltiplos de 4px. Bordes definidos y estados de cobro explícitos.
@@ -22,25 +26,27 @@ Escanear ticket identifica y prerrellena; ambos flujos requieren confirmación.
 La comisión se captura como importe manual junto a la venta y nunca supera su
 total. No hay ajustes ni sugerencias de porcentaje.
 
-Los filtros ofrecen Día, Semana, Mes y Rango personalizado. Los tres primeros
-muestran el intervalo con flechas para navegar; sólo el personalizado despliega
+Un selector ofrece Hoy, Esta semana, Este mes y Rango personalizado. Los tres primeros
+muestran el intervalo con flechas y Volver a hoy; sólo el personalizado despliega
 Desde/Hasta. Liquidar comisiones abre Todas las pendientes, con todas las fechas,
 y permite acotar el periodo antes de confirmar. Las pagadas quedan fuera del pago.
 
-El Resumen destaca la ganancia en una tarjeta grande blanca a la izquierda, con
-color sólo en la cifra. A su derecha, tres tarjetas pequeñas neutras apiladas
+Ganancia destaca su cifra en una tarjeta grande blanca a la izquierda.
+A su derecha, tres tarjetas pequeñas blancas apiladas
 explican el resultado: ventas, gastos y comisiones confirmadas.
-En móvil, la ganancia aparece primero y sus detalles debajo. Debajo del cálculo,
-«Por pagar · Todas las fechas» reúne los saldos globales de
-proveedores y empleados con menor énfasis y acceso a sus pendientes.
+En móvil, la ganancia aparece primero y sus detalles debajo. Pagos pendientes
+es un espacio separado que reúne los saldos globales de proveedores y empleados,
+con selector del destinatario y acceso a sus pendientes. Historial muestra sólo
+los registros elegidos. Ganancia, Historial y Empleados conservan periodos propios;
+Pagos y Revisión no tienen filtro de fecha.
 La franja neutra sólo aparece cuando hay ventas por revisar en el periodo. Separa
 su importe del cálculo: no entran
 en la cuenta ni en las comisiones por pagar. El acceso lleva a la cola global,
 identificada con «Todas las fechas» y su propio importe.
 
 Las ventas manuales usan una etiqueta neutra «Requiere revisión» y una referencia
-interna identificada como tal. «Revisión» es una pestaña secundaria con contador
-global; Registro ofrece el mismo acceso sin añadir otra sección principal.
+interna identificada como tal. Ventas por revisar es un destino estable en la
+navegación, con contador global sólo cuando hay pendientes y estado vacío en otro caso.
 Las fichas de revisión priorizan artículos, cantidades y precios, cliente, fecha,
 pago y comisión. El detalle muestra las partidas y los importes desde el inicio,
 antes de elegir aprobar o buscar un ticket. Códigos y referencias quedan plegados
@@ -62,7 +68,7 @@ que se adaptan al ancho de escritorio y móvil.
 
 Revisión visual de la venta manual: 1366×768, 375×667, 320×568, 390×844, 844×390 y
 568×320 con la comisión activada; también importes largos y errores de validación.
-Las pestañas se distribuyen en varias filas. Hasta 1000px, las tablas se presentan
+Los accesos se distribuyen en dos filas en móvil. Hasta 1000px, las tablas se presentan
 como fichas con etiquetas y todas sus acciones; en escritorio ajustan sus columnas.
 Folios, nombres y referencias largas se parten dentro de su espacio. Ninguna vista,
 menú o formulario requiere desplazamiento horizontal. Se conserva sólo el eje Y,

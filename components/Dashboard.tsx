@@ -26,6 +26,7 @@ import type {
   Sale,
 } from "@/lib/types";
 import { periodRange, type PeriodSelection } from "@/lib/domain";
+import { parseSection, usesPeriod, type Section, type PeriodSection } from "@/lib/navigation";
 import { Modal, Select, money, shortDate } from "./ui";
 import PeriodControls from "./PeriodControls";
 import {
@@ -42,9 +43,7 @@ import {
   type Write,
 } from "./forms";
 
-type Section = "registro" | "resumen" | "empleados";
 type Panel = "ventas" | "salidas" | "comisiones";
-type SummaryView = "ganancia" | "pagos" | "historial" | "revision";
 type Dialog = {
   type:
     | "entrada"
@@ -64,7 +63,10 @@ type Dialog = {
 };
 const sections = [
   { id: "registro" as const, label: "Registro", icon: ClipboardList },
-  { id: "resumen" as const, label: "Resumen", icon: Wallet },
+  { id: "ganancia" as const, label: "Ganancia", icon: Wallet },
+  { id: "pagos" as const, label: "Pagos pendientes", icon: Banknote },
+  { id: "historial" as const, label: "Historial", icon: ReceiptText },
+  { id: "revision" as const, label: "Ventas por revisar", icon: ClipboardCheck },
   { id: "empleados" as const, label: "Empleados", icon: Users },
 ];
 const panels = [
@@ -102,25 +104,21 @@ function Status({ m }: { m: Movement }) {
   );
 }
 
-export default function Dashboard({ today }: { today: string }) {
-  const [section, setSection] = useState<Section>("registro"),
-    [summaryView, setSummaryView] = useState<SummaryView>("ganancia"),
+export default function Dashboard({ today, initialSection = "registro" }: {
+  today: string;
+  initialSection?: Section;
+}) {
+  const [section, setSection] = useState<Section>(initialSection),
     [panel, setPanel] = useState<Panel>("ventas"),
     [payee, setPayee] = useState<"empleados" | "proveedores">("empleados");
-  const [summarySelection, setSummarySelection] = useState<PeriodSelection>({
-      period: "day",
-      anchor: today,
-      from: today,
-      to: today,
-    }),
-    [employeeSelection, setEmployeeSelection] = useState<PeriodSelection>({
-      period: "day",
-      anchor: today,
-      from: today,
-      to: today,
+  const initialPeriod: PeriodSelection = { period: "day", anchor: today, from: today, to: today };
+  const [periods, setPeriods] = useState<Record<PeriodSection, PeriodSelection>>({
+      ganancia: initialPeriod,
+      historial: initialPeriod,
+      empleados: initialPeriod,
     }),
     [page, setPage] = useState(1);
-  const selection = section === "empleados" ? employeeSelection : summarySelection;
+  const selection = periods[usesPeriod(section) ? section : "ganancia"];
   const [data, setData] = useState<AdminState | null>(null),
     [dataKey, setDataKey] = useState(""),
     [loading, setLoading] = useState(true),
@@ -142,26 +140,34 @@ export default function Dashboard({ today }: { today: string }) {
     [selection],
   );
   const fetchId = useRef(0);
-  const summaryRef = useRef<HTMLDivElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const noticeRef = useRef<HTMLDivElement>(null);
   let view = "entradas";
   if (section === "empleados") view = "comisiones";
-  else if (section === "resumen") {
-    if (summaryView === "revision") view = "revision";
-    else if (summaryView === "pagos")
-      view = payee === "empleados" ? "comisiones-pendientes" : "proveedores";
-    else if (summaryView === "historial")
-      view = { ventas: "entradas", salidas: "salidas", comisiones: "comisiones" }[panel];
-  }
-  const globalView =
-    section === "resumen" && (summaryView === "pagos" || summaryView === "revision");
+  else if (section === "revision") view = "revision";
+  else if (section === "pagos")
+    view = payee === "empleados" ? "comisiones-pendientes" : "proveedores";
+  else if (section === "historial")
+    view = { ventas: "entradas", salidas: "salidas", comisiones: "comisiones" }[panel];
+  const globalView = section === "pagos" || section === "revision";
   const queryRange = globalView
     ? { from: "2000-01-01", to: "2100-12-31" }
     : range;
   const queryKey = [view, queryRange.from, queryRange.to, page].join(":");
   useEffect(() => {
-    const value = new URL(window.location.href).searchParams.get("seccion");
-    if (value === "resumen" || value === "empleados") setSection(value);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("seccion") === "resumen") {
+      url.searchParams.set("seccion", "ganancia");
+      window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+    function restore() {
+      setSection(parseSection(new URL(window.location.href).searchParams.get("seccion")));
+      setPage(1);
+      setDialog(null);
+      window.requestAnimationFrame(() => headingRef.current?.focus({ preventScroll: true }));
+    }
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
   }, []);
   useEffect(() => {
     const update = () => setRefresh((n) => n + 1);
@@ -204,23 +210,13 @@ export default function Dashboard({ today }: { today: string }) {
   function navigate(value: Section) {
     setSection(value);
     setPage(1);
-    window.history.replaceState(null, "", "?seccion=" + value);
-  }
-  function chooseSummary(value: SummaryView, reveal = false) {
-    setSummaryView(value);
-    setPage(1);
-    if (reveal) {
-      window.requestAnimationFrame(() => {
-        summaryRef.current?.focus({ preventScroll: true });
-        summaryRef.current?.scrollIntoView({
-          block: "start",
-          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
-            .matches
-            ? "auto"
-            : "smooth",
-        });
-      });
-    }
+    setDialog(null);
+    if (new URL(window.location.href).searchParams.get("seccion") !== value)
+      window.history.pushState(null, "", "?seccion=" + value);
+    window.requestAnimationFrame(() => {
+      headingRef.current?.focus({ preventScroll: true });
+      window.scrollTo({ top: 0, behavior: "instant" });
+    });
   }
   const write: Write = useCallback(async (action, payload, requestId) => {
     setWriting(true);
@@ -431,7 +427,6 @@ export default function Dashboard({ today }: { today: string }) {
       >
         <div className="review-queue-heading">
           <div>
-            <h2>Ventas por revisar</h2>
             <p>
               {data!.reviewCount} {data!.reviewCount === 1 ? "venta" : "ventas"}{" "}
               · Todas las fechas
@@ -695,7 +690,7 @@ export default function Dashboard({ today }: { today: string }) {
       }[dialog.type]
     : "";
   return (
-    <div className="application">
+    <div className="application direct-navigation">
       <header className="app-header">
         <div className="app-brand">
           <span className="brand-mark">
@@ -707,14 +702,27 @@ export default function Dashboard({ today }: { today: string }) {
         </div>
         <nav aria-label="Secciones">
           {sections.map((item) => (
-            <button
+            <a
               key={item.id}
+              href={"?seccion=" + item.id}
               className={section === item.id ? "active" : ""}
-              onClick={() => navigate(item.id)}
+              aria-current={section === item.id ? "page" : undefined}
+              aria-label={item.id === "revision" && data?.reviewCount
+                ? `${item.label}: ${data.reviewCount} ${data.reviewCount === 1 ? "pendiente" : "pendientes"}` : undefined}
+              onClick={(event) => {
+                if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                navigate(item.id);
+              }}
             >
-              <item.icon size={23} />
+              <item.icon size={23} aria-hidden="true" />
               <span>{item.label}</span>
-            </button>
+              {item.id === "revision" && !!data?.reviewCount && (
+                <span className="navigation-count" aria-hidden="true">
+                  {data.reviewCount > 99 ? "99+" : data.reviewCount}
+                </span>
+              )}
+            </a>
           ))}
         </nav>
         <button
@@ -728,12 +736,8 @@ export default function Dashboard({ today }: { today: string }) {
       </header>
       <main className="main-content">
         <div className="page-heading">
-          <h1>
-            {section === "registro"
-              ? "Registro"
-              : section === "resumen"
-                ? "Resumen"
-                : "Gestión de empleados"}
+          <h1 ref={headingRef} tabIndex={-1}>
+            {sections.find((item) => item.id === section)!.label}
           </h1>
           {section === "empleados" && (
             <div className="heading-actions">
@@ -748,19 +752,6 @@ export default function Dashboard({ today }: { today: string }) {
           )}
           {section === "registro" && (
             <span className="date-stamp">{shortDate(today)}</span>
-          )}
-          {(section === "registro" || (section === "resumen" && summaryView !== "revision")) && !!data?.reviewCount && (
-            <button
-              className="review-shortcut"
-              aria-label={`Revisar ${data.reviewCount} ${data.reviewCount === 1 ? "venta" : "ventas"}`}
-              onClick={() => {
-                navigate("resumen");
-                chooseSummary("revision", true);
-              }}
-            >
-              <ClipboardCheck size={19} />
-              Revisar {data.reviewCount}
-            </button>
           )}
         </div>
         {toast && (
@@ -824,45 +815,11 @@ export default function Dashboard({ today }: { today: string }) {
               </span>
               <ChevronRight size={24} />
             </button>
-            <div className="registration-links">
-              <button
-                className="text-button"
-                onClick={() => {
-                  navigate("resumen");
-                  chooseSummary("historial");
-                }}
-              >
-                <ReceiptText size={21} />
-                Ver movimientos
-                <ChevronRight size={18} />
-              </button>
-              <button
-                className="text-button"
-                disabled={!data}
-                onClick={() => setDialog({ type: "payout" })}
-              >
-                <Banknote size={22} />
-                Liquidar comisiones
-                <ChevronRight size={18} />
-              </button>
-            </div>
           </div>
         )}
-        {section === "resumen" && (
-          <div className="summary-workspace" ref={summaryRef} tabIndex={-1}>
-            <Select
-              label="Ver"
-              value={summaryView}
-              onChange={(value) => chooseSummary(value as SummaryView)}
-              options={[
-                { value: "ganancia", label: "Ganancia" },
-                { value: "pagos", label: "Pagos pendientes" },
-                { value: "historial", label: "Historial" },
-                ...(data?.reviewCount || summaryView === "revision"
-                  ? [{ value: "revision", label: "Ventas por revisar" }] : []),
-              ]}
-            />
-            {summaryView === "historial" && (
+        {(section === "historial" || section === "pagos") && (
+          <div className="workspace-filters">
+            {section === "historial" && (
               <Select
                 label="Tipo de registro"
                 value={panel}
@@ -873,7 +830,7 @@ export default function Dashboard({ today }: { today: string }) {
                 options={panels.map((item) => ({ value: item.id, label: item.label }))}
               />
             )}
-            {summaryView === "pagos" && (
+            {section === "pagos" && (
               <Select
                 label="Pagar a"
                 value={payee}
@@ -889,13 +846,12 @@ export default function Dashboard({ today }: { today: string }) {
             )}
           </div>
         )}
-        {(section === "empleados" || (section === "resumen" && !globalView)) && (
+        {usesPeriod(section) && (
           <PeriodControls
             value={selection}
             today={today}
             onChange={(value) => {
-              if (section === "empleados") setEmployeeSelection(value);
-              else setSummarySelection(value);
+              setPeriods((current) => ({ ...current, [section]: value }));
               setPage(1);
             }}
           />
@@ -910,9 +866,7 @@ export default function Dashboard({ today }: { today: string }) {
               className={loading || error ? "data-loading" : ""}
               aria-busy={loading}
             >
-              {section === "resumen" && (
-                <>
-                  {summaryView === "ganancia" && (
+                  {section === "ganancia" && (
                     <>
                   <section
                     className="profit-section"
@@ -1000,13 +954,13 @@ export default function Dashboard({ today }: { today: string }) {
                   )}
                     </>
                   )}
-                  {summaryView === "revision" && reviewList()}
-                  {summaryView === "historial" && (
+                  {section === "revision" && reviewList()}
+                  {section === "historial" && (
                     <section aria-label="Historial del periodo">
                       {panel === "comisiones" ? commissionTable() : movementTable()}
                     </section>
                   )}
-                  {summaryView === "pagos" && (
+                  {section === "pagos" && (
                     <section className="payments-workspace" aria-label="Pagos pendientes de todas las fechas">
                       <div className="payment-heading">
                         <div>
@@ -1018,8 +972,6 @@ export default function Dashboard({ today }: { today: string }) {
                       {payee === "empleados" ? employeePayables() : movementTable()}
                     </section>
                   )}
-                </>
-              )}
               {section === "empleados" && (
                 <>
                   <div className="employee-toolbar">
