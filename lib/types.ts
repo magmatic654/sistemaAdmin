@@ -54,6 +54,9 @@ export type Movement = {
   source_id: string | null;
   source_folio: string | null;
   source_origin: string | null;
+  manual_folio: string | null;
+  manual_origin: string | null;
+  manual_ticket_code: string | null;
   source_cancelled: boolean;
   cost_cents: number | null;
   voided_at: string | null;

@@ -22,6 +22,7 @@ try {
         "001-administration.sql",
         "002-manual-registration.sql",
         "003-commission-settlements.sql",
+        "004-offline-manual-sales.sql",
       ])
         await client.query(
           await fs.readFile(

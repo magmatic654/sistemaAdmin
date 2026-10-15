@@ -44,16 +44,20 @@ try {
   );
   assert.equal(identity.rows[0].environment, "development");
   assert.equal(identity.rows[0].instance_id, process.env.SHARED_DATABASE_ID);
-  for (const name of ["001-administration.sql", "002-manual-registration.sql", "003-commission-settlements.sql"])
+  for (const name of [
+    "001-administration.sql",
+    "002-manual-registration.sql",
+    "003-commission-settlements.sql",
+    "004-offline-manual-sales.sql",
+  ])
     await connection.query(
       await fs.readFile(
         new URL("../database/" + name, import.meta.url),
         "utf8",
       ),
     );
-  const { mutate, getState, lookupSales, movementDetail, payoutPreview } = await import(
-    "../lib/data.ts"
-  );
+  const { mutate, getState, lookupSales, movementDetail, payoutPreview } =
+    await import("../lib/data.ts");
   const { businessToday } = await import("../lib/domain.ts");
   const day = businessToday(),
     params = new URLSearchParams({ from: day, to: day });
@@ -63,8 +67,8 @@ try {
     await connection.query("SELECT id,nombre FROM servicios LIMIT 1")
   ).rows[0];
   assert.ok(service);
-  async function ticket(origin = "negra") {
-    const id = "admin-qa-" + randomUUID();
+  async function ticket(origin = "negra", overrides = {}) {
+    const id = overrides.id || "admin-qa-" + randomUUID();
     const item = {
       tipo: "servicio",
       servicioId: service.id,
@@ -80,7 +84,7 @@ try {
       VALUES($1,$2,$3::jsonb,$4::jsonb,200,32,232,'efectivo',now(),$5,$6::jsonb)`,
       [
         id,
-        "QA-" + randomUUID().slice(0, 8),
+        overrides.folio || "QA-" + randomUUID().slice(0, 8),
         JSON.stringify({ nombre: "Cliente ticket QA" }),
         JSON.stringify([item]),
         origin,
@@ -421,52 +425,281 @@ try {
     await run("movement.void", { id: second.id, reason: "Fin QA" });
   });
   await test("commission preference persists only with a successful sale and snapshots the chosen rate", async () => {
-    await run("preferences.save", {rate:"7.5"});
-    assert.equal((await getState(params)).commissionRateBps,750);
-    await assert.rejects(run("preferences.save",{rate:"101"}),/100%/);
-    await assert.rejects(run("movement.create",{...input,ticketCode:"LLA1:V:"+await ticket(),commission:{employeeId:randomUUID(),mode:"percent",value:"12",rememberRate:true}}),/empleado activo/);
-    assert.equal((await getState(params)).commissionRateBps,750);
-    const saved = await run("movement.create",{...input,ticketCode:"LLA1:V:"+await ticket(),commission:{...input.commission,value:"12",rememberRate:true}});
-    assert.equal((await getState(params)).commissionRateBps,1200);
-    const snapshot = (await connection.query("SELECT mode,rate_bps FROM administracion.commissions WHERE movement_id=$1",[saved.id])).rows[0];
-    assert.deepEqual(snapshot,{mode:"percent",rate_bps:1200});
+    await run("preferences.save", { rate: "7.5" });
+    assert.equal((await getState(params)).commissionRateBps, 750);
+    await assert.rejects(run("preferences.save", { rate: "101" }), /100%/);
+    await assert.rejects(
+      run("movement.create", {
+        ...input,
+        ticketCode: "LLA1:V:" + (await ticket()),
+        commission: {
+          employeeId: randomUUID(),
+          mode: "percent",
+          value: "12",
+          rememberRate: true,
+        },
+      }),
+      /empleado activo/,
+    );
+    assert.equal((await getState(params)).commissionRateBps, 750);
+    const saved = await run("movement.create", {
+      ...input,
+      ticketCode: "LLA1:V:" + (await ticket()),
+      commission: { ...input.commission, value: "12", rememberRate: true },
+    });
+    assert.equal((await getState(params)).commissionRateBps, 1200);
+    const snapshot = (
+      await connection.query(
+        "SELECT mode,rate_bps FROM administracion.commissions WHERE movement_id=$1",
+        [saved.id],
+      )
+    ).rows[0];
+    assert.deepEqual(snapshot, { mode: "percent", rate_bps: 1200 });
   });
-  const payEmployee = await run("employee.save",{name:"Empleado liquidación QA",position:"Técnico",phone:""});
-  async function payable(date=day) {
-    return run("movement.create",{...input,ticketCode:"LLA1:V:"+await ticket(),date,commission:{...input.commission,employeeId:payEmployee.id}});
+  const payEmployee = await run("employee.save", {
+    name: "Empleado liquidación QA",
+    position: "Técnico",
+    phone: "",
+  });
+  async function payable(date = day) {
+    return run("movement.create", {
+      ...input,
+      ticketCode: "LLA1:V:" + (await ticket()),
+      date,
+      commission: { ...input.commission, employeeId: payEmployee.id },
+    });
   }
   await test("employee and period preview includes only pending commissions in that range", async () => {
-    await payable();await payable();await payable("2001-01-01");
-    const preview = await payoutPreview(payEmployee.id,"day",day);
-    assert.equal(preview.commissions.length,2);
-    assert.equal(preview.totalCents,2320);
-    assert.equal((await payoutPreview(payEmployee.id,"week","2001-01-03")).commissions.length,1);
-    assert.equal((await payoutPreview(payEmployee.id,"month","2001-01-31")).totalCents,1160);
-    assert.equal((await payoutPreview(employee.id,"month","2001-01-31")).commissions.length,0);
-    const payload={employeeId:payEmployee.id,period:"day",anchor:day,paidOn:day,commissionIds:preview.commissions.map(c=>c.id),expectedTotalCents:preview.totalCents};
-    await assert.rejects(run("commission.batchPay",{...payload,employeeId:employee.id}),/cambió/);
-    await assert.rejects(run("commission.batchPay",{...payload,expectedTotalCents:1}),/importe cambió/);
-    await assert.rejects(run("commission.batchPay",{...payload,paidOn:"2000-01-01"}),/anterior/);
-    const request=randomUUID();
-    const race=await Promise.allSettled([run("commission.batchPay",payload,request),run("commission.batchPay",payload)]);
-    assert.equal(race.filter(r=>r.status==="fulfilled").length,1);
-    const first=race[0].status==="fulfilled" ? race[0].value : null;
-    if(first) assert.deepEqual(await run("commission.batchPay",payload,request),first);
-    assert.equal((await payoutPreview(payEmployee.id,"day",day)).commissions.length,0);
-    await assert.rejects(run("commission.batchPay",payload),/ya fue pagada/);
-    const payouts=await connection.query("SELECT * FROM administracion.commission_payouts WHERE employee_id=$1",[payEmployee.id]);
-    assert.equal(payouts.rows.length,1);assert.equal(Number(payouts.rows[0].amount_cents),2320);
-    await assert.rejects(connection.query("UPDATE administracion.commissions SET paid_on=NULL WHERE id=$1",[payload.commissionIds[0]]),e=>e.code==="23514");
+    await payable();
+    await payable();
+    await payable("2001-01-01");
+    const preview = await payoutPreview(payEmployee.id, "day", day);
+    assert.equal(preview.commissions.length, 2);
+    assert.equal(preview.totalCents, 2320);
+    assert.equal(
+      (await payoutPreview(payEmployee.id, "week", "2001-01-03")).commissions
+        .length,
+      1,
+    );
+    assert.equal(
+      (await payoutPreview(payEmployee.id, "month", "2001-01-31")).totalCents,
+      1160,
+    );
+    assert.equal(
+      (await payoutPreview(employee.id, "month", "2001-01-31")).commissions
+        .length,
+      0,
+    );
+    const payload = {
+      employeeId: payEmployee.id,
+      period: "day",
+      anchor: day,
+      paidOn: day,
+      commissionIds: preview.commissions.map((c) => c.id),
+      expectedTotalCents: preview.totalCents,
+    };
+    await assert.rejects(
+      run("commission.batchPay", { ...payload, employeeId: employee.id }),
+      /cambió/,
+    );
+    await assert.rejects(
+      run("commission.batchPay", { ...payload, expectedTotalCents: 1 }),
+      /importe cambió/,
+    );
+    await assert.rejects(
+      run("commission.batchPay", { ...payload, paidOn: "2000-01-01" }),
+      /anterior/,
+    );
+    const request = randomUUID();
+    const race = await Promise.allSettled([
+      run("commission.batchPay", payload, request),
+      run("commission.batchPay", payload),
+    ]);
+    assert.equal(race.filter((r) => r.status === "fulfilled").length, 1);
+    const first = race[0].status === "fulfilled" ? race[0].value : null;
+    if (first)
+      assert.deepEqual(
+        await run("commission.batchPay", payload, request),
+        first,
+      );
+    assert.equal(
+      (await payoutPreview(payEmployee.id, "day", day)).commissions.length,
+      0,
+    );
+    await assert.rejects(run("commission.batchPay", payload), /ya fue pagada/);
+    const payouts = await connection.query(
+      "SELECT * FROM administracion.commission_payouts WHERE employee_id=$1",
+      [payEmployee.id],
+    );
+    assert.equal(payouts.rows.length, 1);
+    assert.equal(Number(payouts.rows[0].amount_cents), 2320);
+    await assert.rejects(
+      connection.query(
+        "UPDATE administracion.commissions SET paid_on=NULL WHERE id=$1",
+        [payload.commissionIds[0]],
+      ),
+      (e) => e.code === "23514",
+    );
   });
   await test("overlapping settlements are atomic and an inactive employee can collect existing commissions", async () => {
-    await payable();await payable();await payable();
-    await run("employee.active",{id:payEmployee.id,active:false});
-    const preview=await payoutPreview(payEmployee.id,"day",day), ids=preview.commissions.map(c=>c.id);
-    const payload={employeeId:payEmployee.id,period:"day",anchor:day,paidOn:day,expectedTotalCents:2320};
-    const result=await Promise.allSettled([run("commission.batchPay",{...payload,commissionIds:ids.slice(0,2)}),run("commission.batchPay",{...payload,commissionIds:ids.slice(1,3)})]);
+    await payable();
+    await payable();
+    await payable();
+    await run("employee.active", { id: payEmployee.id, active: false });
+    const preview = await payoutPreview(payEmployee.id, "day", day),
+      ids = preview.commissions.map((c) => c.id);
+    const payload = {
+      employeeId: payEmployee.id,
+      period: "day",
+      anchor: day,
+      paidOn: day,
+      expectedTotalCents: 2320,
+    };
+    const result = await Promise.allSettled([
+      run("commission.batchPay", {
+        ...payload,
+        commissionIds: ids.slice(0, 2),
+      }),
+      run("commission.batchPay", {
+        ...payload,
+        commissionIds: ids.slice(1, 3),
+      }),
+    ]);
+    assert.equal(result.filter((r) => r.status === "fulfilled").length, 1);
+    assert.equal(
+      (await payoutPreview(payEmployee.id, "day", day)).commissions.length,
+      1,
+    );
+    await run("employee.active", { id: payEmployee.id, active: true });
+  });
+  await test("manual fallback records a sale and commission without any sale in the other apps", async () => {
+    const offlineId = "offline-" + randomUUID(),
+      folio = "PAPEL-" + randomUUID().slice(0, 8);
+    const payload = {
+      ...input,
+      manual: true,
+      folio,
+      origin: "manual",
+      manualTicketCode: "LLA1:V:" + offlineId,
+    };
+    const saved = await run("movement.create", payload),
+      detail = await movementDetail(saved.id);
+    assert.equal(detail.movement.source_id, null);
+    assert.equal(detail.movement.manual_folio, folio);
+    assert.equal(detail.movement.commission_cents, 1160);
+    assert.equal(
+      (
+        await connection.query("SELECT id FROM public.ventas WHERE id=$1", [
+          offlineId,
+        ])
+      ).rows.length,
+      0,
+    );
+    const preview = await payoutPreview(employee.id, "day", day),
+      commission = preview.commissions.find((c) => c.movement_id === saved.id);
+    assert.ok(commission);
+    await run("commission.batchPay", {
+      employeeId: employee.id,
+      period: "day",
+      anchor: day,
+      paidOn: day,
+      commissionIds: [commission.id],
+      expectedTotalCents: 1160,
+    });
+    await assert.rejects(
+      run("movement.create", {
+        ...payload,
+        folio: " " + folio.toLowerCase() + " ",
+      }),
+      /ya está registrado/,
+    );
+    await ticket("negra", { id: offlineId, folio });
+    assert.equal(
+      (await lookupSales("LLA1:V:" + offlineId))[0].registeredId,
+      saved.id,
+    );
+    await assert.rejects(
+      run("movement.create", {
+        ...input,
+        source: { kind: "ventas", id: offlineId },
+        useTicketData: true,
+      }),
+      /ya está registrado/,
+    );
+  });
+  await test("manual folios serialize duplicates, survive voiding and block later scans even without a printed ID", async () => {
+    const folio = "CONTINGENCIA-" + randomUUID().slice(0, 8),
+      payload = {
+        ...input,
+        manual: true,
+        folio,
+        origin: "manual",
+        commission: null,
+      };
+    const race = await Promise.allSettled([
+      run("movement.create", payload),
+      run("movement.create", { ...payload, folio: folio.toLowerCase() }),
+    ]);
+    assert.equal(race.filter((r) => r.status === "fulfilled").length, 1);
+    const saved = race.find((r) => r.status === "fulfilled").value;
+    await run("movement.void", {
+      id: saved.id,
+      reason: "Fin de prueba manual",
+    });
+    await assert.rejects(run("movement.create", payload), /ya está registrado/);
+    const sourceId = await ticket("blanca", { folio });
+    assert.equal(
+      (await lookupSales("LLA1:V:" + sourceId))[0].registeredId,
+      saved.id,
+    );
+    await assert.rejects(
+      run("movement.create", { ...input, ticketCode: "LLA1:V:" + sourceId }),
+      /ya está registrado/,
+    );
+  });
+  await test("manual known-origin folios allow distinct systems but reject existing registered canonical folios", async () => {
+    const folio = "MISMO-FOLIO-" + randomUUID().slice(0, 8),
+      payload = {
+        ...input,
+        manual: true,
+        folio,
+        origin: "negra",
+        commission: null,
+      };
+    await run("movement.create", payload);
+    await run("movement.create", { ...payload, origin: "blanca" });
+    await assert.rejects(
+      run("movement.create", { ...payload, origin: "manual" }),
+      /ya está registrado/,
+    );
+    const sourceId = await ticket(),
+      [sale] = await lookupSales("LLA1:V:" + sourceId);
+    await run("movement.create", {
+      ...input,
+      ticketCode: "LLA1:V:" + sourceId,
+      commission: null,
+    });
+    await assert.rejects(
+      run("movement.create", { ...payload, folio: sale.folio }),
+      /ya está registrado/,
+    );
+    await assert.rejects(
+      run("movement.create", {
+        ...payload,
+        folio: "OTRO-" + folio,
+        manualTicketCode: "LLA1:V:" + sourceId,
+      }),
+      /ya está registrado/,
+    );
+  });
+  await test("a manual entry racing a scan still creates exactly one record for the same ticket",async()=>{
+    const sourceId=await ticket(),[sale]=await lookupSales("LLA1:V:"+sourceId);
+    const scanned={...input,ticketCode:"LLA1:V:"+sourceId,commission:null};
+    const manual={...input,manual:true,folio:sale.folio,origin:sale.origin,manualTicketCode:"LLA1:V:"+sourceId,commission:null};
+    const result=await Promise.allSettled([run("movement.create",manual),run("movement.create",scanned)]);
     assert.equal(result.filter(r=>r.status==="fulfilled").length,1);
-    assert.equal((await payoutPreview(payEmployee.id,"day",day)).commissions.length,1);
-    await run("employee.active",{id:payEmployee.id,active:true});
+    const records=await connection.query("SELECT id FROM administracion.movements WHERE source_id=$1 OR manual_ticket_code=$2",[sourceId,"LLA1:V:"+sourceId]);
+    assert.equal(records.rows.length,1);
   });
   if (process.argv.includes("--keep")) {
     await fs.mkdir(new URL("../.local/", import.meta.url), { recursive: true });

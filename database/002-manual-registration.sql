@@ -2,7 +2,8 @@
 -- No feeds, automatic imports, source totals or source cancellations drive the dashboard.
 DROP VIEW IF EXISTS administracion.ledger;
 DO $$ BEGIN
-  IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='admin_income_requires_ticket' AND conrelid='administracion.movements'::regclass) THEN
+  IF NOT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='administracion' AND table_name='movements' AND column_name='manual_folio')
+     AND NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='admin_income_requires_ticket' AND conrelid='administracion.movements'::regclass) THEN
     ALTER TABLE administracion.movements ADD CONSTRAINT admin_income_requires_ticket
       CHECK(kind<>'entrada' OR (source_kind IS NOT NULL AND source_id IS NOT NULL));
   END IF;

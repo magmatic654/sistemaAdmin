@@ -13,6 +13,7 @@ import {
   commissionAmount,
   parseTicketReference,
   periodRange,
+  ticketReference,
   type RecordInput,
   type Line,
 } from "./domain.ts";
@@ -97,7 +98,13 @@ export async function lookupSales(
   const ref = parseTicketReference(needle);
   const values = ref ? [ref.kind, ref.id] : [needle];
   const sql = `SELECT s.*, (s.sold_at AT TIME ZONE 'America/Mexico_City')::date::text AS business_date,m.id AS registered_id
-    FROM (${SALE_UNION}) s LEFT JOIN administracion.movements m ON m.source_kind=s.kind AND m.source_id=s.id
+    FROM (${SALE_UNION}) s LEFT JOIN LATERAL (
+      SELECT m.id FROM administracion.movements m WHERE
+      (m.source_kind=s.kind AND m.source_id=s.id) OR
+      m.manual_ticket_code=('LLA1:' || CASE WHEN s.kind='ventas' THEN 'V' ELSE 'P' END || ':' || s.id) OR
+      (lower(btrim(m.manual_folio))=lower(btrim(s.folio)) AND m.manual_origin IN ('manual',s.origin))
+      ORDER BY m.created_at LIMIT 1
+    ) m ON true
     WHERE ${ref ? "s.kind=$1 AND s.id=$2" : "(s.folio=$1 OR s.id=$1)"} ORDER BY s.sold_at DESC LIMIT 20`;
   const result = client
     ? await client.query(sql, values)
@@ -140,7 +147,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
   }
   if (search) {
     values.push("%" + search.replace(/[\\%_]/g, "\\$&") + "%");
-    condition += ` AND concat_ws(' ',l.concept,l.contact,l.source_folio,l.reference,l.employee_name) ILIKE $${values.length}`;
+    condition += ` AND concat_ws(' ',l.concept,l.contact,l.source_folio,l.manual_folio,l.reference,l.employee_name) ILIKE $${values.length}`;
   }
   const [
     totals,
@@ -192,13 +199,15 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
       "SELECT * FROM administracion.suppliers ORDER BY active DESC,name,id",
     ),
     query(
-      `SELECT c.id,c.movement_id,l.date::text,l.concept,l.contact,l.source_folio,c.employee_id,l.employee_name,
+      `SELECT c.id,c.movement_id,l.date::text,l.concept,l.contact,COALESCE(l.source_folio,l.manual_folio) AS source_folio,c.employee_id,l.employee_name,
       c.amount_cents,c.paid_on::text,l.source_cancelled,l.voided_at
       FROM administracion.commissions c JOIN administracion.manual_ledger l ON l.id=c.movement_id
       WHERE ${view === "comisiones-pendientes" ? "c.paid_on IS NULL AND l.voided_at IS NULL AND $1::date<=$2::date" : "l.date BETWEEN $1::date AND $2::date"} ORDER BY l.date DESC,c.created_at DESC`,
       [from, to],
     ),
-    query("SELECT commission_rate_bps FROM administracion.preferences WHERE singleton"),
+    query(
+      "SELECT commission_rate_bps FROM administracion.preferences WHERE singleton",
+    ),
   ]);
   const t = totals.rows[0],
     c = cash.rows[0],
@@ -300,12 +309,24 @@ async function addCommission(
   const amount = commissionAmount(total, commission.mode, commission.value);
   await client.query(
     "INSERT INTO administracion.commissions(id,movement_id,employee_id,amount_cents,mode,rate_bps) VALUES($1,$2,$3,$4,$5,$6)",
-    [randomUUID(), movementId, employeeId, amount, commission.mode,
-      commission.mode === "percent" ? cents(commission.value, "Porcentaje") : null],
+    [
+      randomUUID(),
+      movementId,
+      employeeId,
+      amount,
+      commission.mode,
+      commission.mode === "percent"
+        ? cents(commission.value, "Porcentaje")
+        : null,
+    ],
   );
   if (commission.rememberRate === true) {
-    if (commission.mode !== "percent") throw new ValidationError("La sugerencia debe ser un porcentaje.");
-    await client.query("UPDATE administracion.preferences SET commission_rate_bps=$1 WHERE singleton", [cents(commission.value, "Porcentaje")]);
+    if (commission.mode !== "percent")
+      throw new ValidationError("La sugerencia debe ser un porcentaje.");
+    await client.query(
+      "UPDATE administracion.preferences SET commission_rate_bps=$1 WHERE singleton",
+      [cents(commission.value, "Porcentaje")],
+    );
   }
 }
 
@@ -340,6 +361,37 @@ async function addPayment(
   return { id };
 }
 
+async function checkEntryIdentity(
+  client: PoolClient,
+  folio: string,
+  origin: string,
+  code: string | null,
+  manual = false,
+) {
+  // A single folio lock also serializes unknown-origin manual tickets against either app.
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended('admin-folio:'||lower(btrim($1)),1))",
+    [folio],
+  );
+  if (code)
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,1))", [
+      "admin-code:" + code,
+    ]);
+  const identity = code ? parseTicketReference(code) : null;
+  const duplicate = await client.query(
+    `SELECT id FROM administracion.movements WHERE
+    (lower(btrim(COALESCE(source_folio,manual_folio)))=lower(btrim($1)) AND
+      ($2='manual' OR COALESCE(source_origin,manual_origin) IN ('manual',$2)) AND
+      ($5::boolean OR manual_folio IS NOT NULL)) OR
+    ($3::text IS NOT NULL AND (manual_ticket_code=$3 OR (source_kind=$4 AND source_id=$6))) LIMIT 1`,
+    [folio, origin, code, identity?.kind || null, manual, identity?.id || null],
+  );
+  if (duplicate.rows.length)
+    throw new ValidationError(
+      "Este ticket ya está registrado en Administración (folio o ID repetido).",
+    );
+}
+
 async function createMovement(client: PoolClient, input: RecordInput) {
   const kind = input.kind;
   if (kind !== "entrada" && kind !== "salida")
@@ -355,11 +407,35 @@ async function createMovement(client: PoolClient, input: RecordInput) {
       (kind === "entrada" ? "Público general" : ""),
     phone = text(input.phone, "Teléfono", 40, false);
   let paymentMethod = method(input.method);
-  if (kind === "entrada") {
-    if (kind !== "entrada")
+  const manual = kind === "entrada" && input.manual === true;
+  let manualFolio: string | null = null,
+    manualOrigin: string | null = null,
+    manualCode: string | null = null;
+  if (manual) {
+    if (input.source)
       throw new ValidationError(
-        "Un ticket solo puede registrarse como entrada.",
+        "Selecciona registro manual o ticket identificado.",
       );
+    manualFolio = text(input.folio, "Folio del ticket", 160);
+    manualOrigin = text(input.origin, "Origen", 10);
+    if (!["negra", "blanca", "manual"].includes(manualOrigin))
+      throw new ValidationError("Selecciona el origen del ticket.");
+    if (input.manualTicketCode) {
+      manualCode = scanValue(text(input.manualTicketCode, "ID completo", 110));
+      if (!parseTicketReference(manualCode))
+        throw new ValidationError(
+          "Usa el ID completo impreso: LLA1:V:… o LLA1:P:…",
+        );
+    }
+    await checkEntryIdentity(
+      client,
+      manualFolio,
+      manualOrigin,
+      manualCode,
+      true,
+    );
+  }
+  if (kind === "entrada" && !manual) {
     let identity: RecordInput;
     if (input.source) identity = record(input.source);
     else {
@@ -393,6 +469,12 @@ async function createMovement(client: PoolClient, input: RecordInput) {
       throw new ValidationError(
         "Este ticket ya está registrado en Administración.",
       );
+    await checkEntryIdentity(
+      client,
+      source.folio,
+      source.origin,
+      ticketReference(source.kind, source.id),
+    );
   }
   if (source && input.useTicketData === true) {
     lines = source.items;
@@ -461,8 +543,9 @@ async function createMovement(client: PoolClient, input: RecordInput) {
     throw new ValidationError("El pago inicial no puede superar el total.");
   await client.query(
     `INSERT INTO administracion.movements(id,kind,date,concept,category,contact,phone,supplier_id,items,
-    subtotal_cents,tax_cents,total_cents,method,reference,notes,source_kind,source_id,source_folio,source_origin,cost_cents)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+    subtotal_cents,tax_cents,total_cents,method,reference,notes,source_kind,source_id,source_folio,source_origin,cost_cents,
+    manual_folio,manual_origin,manual_ticket_code)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
     [
       id,
       kind,
@@ -477,13 +560,18 @@ async function createMovement(client: PoolClient, input: RecordInput) {
       tax,
       total,
       paymentMethod,
-      source && input.useTicketData === true ? source.folio : text(input.reference, "Referencia", 160, false),
+      source && input.useTicketData === true
+        ? source.folio
+        : manualFolio || text(input.reference, "Referencia", 160, false),
       text(input.notes, "Notas", 2000, false),
       source?.kind || null,
       source?.id || null,
       source?.folio || null,
       source?.origin || null,
       source && input.useTicketData === true ? source.costCents : null,
+      manualFolio,
+      manualOrigin,
+      manualCode,
     ],
   );
   if (input.commission != null) {
@@ -501,51 +589,107 @@ async function createMovement(client: PoolClient, input: RecordInput) {
   return { id };
 }
 
-export async function payoutPreview(employeeId: string, period: string, anchor: string): Promise<PayoutPreview> {
+export async function payoutPreview(
+  employeeId: string,
+  period: string,
+  anchor: string,
+): Promise<PayoutPreview> {
   uuid(employeeId);
-  const {from, to} = periodRange(period, anchor);
-  const employee = await query("SELECT id FROM administracion.employees WHERE id=$1", [employeeId]);
-  if (!employee.rows.length) throw new ValidationError("Selecciona un empleado.");
-  const result = await query(`SELECT c.id,c.movement_id,l.date::text,l.concept,l.contact,l.source_folio,
+  const { from, to } = periodRange(period, anchor);
+  const employee = await query(
+    "SELECT id FROM administracion.employees WHERE id=$1",
+    [employeeId],
+  );
+  if (!employee.rows.length)
+    throw new ValidationError("Selecciona un empleado.");
+  const result = await query(
+    `SELECT c.id,c.movement_id,l.date::text,l.concept,l.contact,COALESCE(l.source_folio,l.manual_folio) AS source_folio,
     c.employee_id,l.employee_name,c.amount_cents,c.paid_on::text,l.source_cancelled,l.voided_at
     FROM administracion.commissions c JOIN administracion.manual_ledger l ON l.id=c.movement_id
     WHERE c.employee_id=$1 AND c.paid_on IS NULL AND l.voided_at IS NULL
-    AND l.date BETWEEN $2::date AND $3::date ORDER BY l.date,c.id`, [employeeId,from,to]);
-  const commissions = result.rows.map(row => ({...row,amount_cents:Number(row.amount_cents)})) as CommissionRow[];
-  return {employeeId,from,to,commissions,totalCents:commissions.reduce((sum,c)=>sum+c.amount_cents,0)};
+    AND l.date BETWEEN $2::date AND $3::date ORDER BY l.date,c.id`,
+    [employeeId, from, to],
+  );
+  const commissions = result.rows.map((row) => ({
+    ...row,
+    amount_cents: Number(row.amount_cents),
+  })) as CommissionRow[];
+  return {
+    employeeId,
+    from,
+    to,
+    commissions,
+    totalCents: commissions.reduce((sum, c) => sum + c.amount_cents, 0),
+  };
 }
 
 async function payCommissions(client: PoolClient, input: RecordInput) {
-  const employeeId = uuid(input.employeeId), paidOn = date(input.paidOn);
-  const period = text(input.period,"Periodo",10), anchor = date(input.anchor);
-  const {from,to} = periodRange(period,anchor);
-  if (!Array.isArray(input.commissionIds) || !input.commissionIds.length || input.commissionIds.length>5000)
+  const employeeId = uuid(input.employeeId),
+    paidOn = date(input.paidOn);
+  const period = text(input.period, "Periodo", 10),
+    anchor = date(input.anchor);
+  const { from, to } = periodRange(period, anchor);
+  if (
+    !Array.isArray(input.commissionIds) ||
+    !input.commissionIds.length ||
+    input.commissionIds.length > 5000
+  )
     throw new ValidationError("Selecciona comisiones pendientes para pagar.");
   const ids = input.commissionIds.map(uuid);
-  if (new Set(ids).size!==ids.length) throw new ValidationError("Hay comisiones repetidas.");
+  if (new Set(ids).size !== ids.length)
+    throw new ValidationError("Hay comisiones repetidas.");
   // Lock movements first, in stable order, matching the payment/void lock order.
   // Only commissions explicitly reviewed by the administrator may be settled.
-  const initial = await client.query("SELECT movement_id FROM administracion.commissions WHERE id=ANY($1::uuid[]) ORDER BY movement_id",[ids]);
-  if (initial.rows.length!==ids.length) throw new ValidationError("Las comisiones cambiaron. Vuelve a revisar el pago.");
-  for (const row of initial.rows) await lockMovement(client,row.movement_id);
-  const result = await client.query(`SELECT c.*,m.date::text FROM administracion.commissions c
+  const initial = await client.query(
+    "SELECT movement_id FROM administracion.commissions WHERE id=ANY($1::uuid[]) ORDER BY movement_id",
+    [ids],
+  );
+  if (initial.rows.length !== ids.length)
+    throw new ValidationError(
+      "Las comisiones cambiaron. Vuelve a revisar el pago.",
+    );
+  for (const row of initial.rows) await lockMovement(client, row.movement_id);
+  const result = await client.query(
+    `SELECT c.*,m.date::text FROM administracion.commissions c
     JOIN administracion.movements m ON m.id=c.movement_id WHERE c.id=ANY($1::uuid[])
-    ORDER BY c.movement_id FOR UPDATE OF c`,[ids]);
+    ORDER BY c.movement_id FOR UPDATE OF c`,
+    [ids],
+  );
   for (const row of result.rows) {
-    if (row.employee_id!==employeeId || row.paid_on || row.date<from || row.date>to)
-      throw new ValidationError("Alguna comisión ya fue pagada o cambió. Vuelve a revisar el pago.");
-    if (paidOn<row.date) throw new ValidationError("El pago no puede ser anterior a las ventas.");
+    if (
+      row.employee_id !== employeeId ||
+      row.paid_on ||
+      row.date < from ||
+      row.date > to
+    )
+      throw new ValidationError(
+        "Alguna comisión ya fue pagada o cambió. Vuelve a revisar el pago.",
+      );
+    if (paidOn < row.date)
+      throw new ValidationError("El pago no puede ser anterior a las ventas.");
   }
-  const total = result.rows.reduce((sum,row)=>sum+Number(row.amount_cents),0);
-  if (!Number.isSafeInteger(total) || total!==input.expectedTotalCents)
+  const total = result.rows.reduce(
+    (sum, row) => sum + Number(row.amount_cents),
+    0,
+  );
+  if (!Number.isSafeInteger(total) || total !== input.expectedTotalCents)
     throw new ValidationError("El importe cambió. Vuelve a revisar el pago.");
   const id = randomUUID();
-  await client.query(`INSERT INTO administracion.commission_payouts
+  await client.query(
+    `INSERT INTO administracion.commission_payouts
     (id,employee_id,period,date_from,date_to,paid_on,amount_cents,commission_count)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[id,employeeId,period,from,to,paidOn,total,ids.length]);
-  const updated = await client.query("UPDATE administracion.commissions SET paid_on=$2,payout_id=$3 WHERE id=ANY($1::uuid[]) AND paid_on IS NULL RETURNING id",[ids,paidOn,id]);
-  if (updated.rowCount!==ids.length) throw new ValidationError("El pago ya fue registrado. Actualiza la pantalla.");
-  return {id,totalCents:total,count:ids.length};
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [id, employeeId, period, from, to, paidOn, total, ids.length],
+  );
+  const updated = await client.query(
+    "UPDATE administracion.commissions SET paid_on=$2,payout_id=$3 WHERE id=ANY($1::uuid[]) AND paid_on IS NULL RETURNING id",
+    [ids, paidOn, id],
+  );
+  if (updated.rowCount !== ids.length)
+    throw new ValidationError(
+      "El pago ya fue registrado. Actualiza la pantalla.",
+    );
+  return { id, totalCents: total, count: ids.length };
 }
 
 async function executeAction(
@@ -562,8 +706,12 @@ async function executeAction(
   if (action === "commission.batchPay") return payCommissions(client, input);
   if (action === "preferences.save") {
     const rate = input.rate === null ? null : cents(input.rate, "Porcentaje");
-    if (rate !== null && rate > 10000) throw new ValidationError("El porcentaje no puede superar 100%.");
-    await client.query("UPDATE administracion.preferences SET commission_rate_bps=$1 WHERE singleton", [rate]);
+    if (rate !== null && rate > 10000)
+      throw new ValidationError("El porcentaje no puede superar 100%.");
+    await client.query(
+      "UPDATE administracion.preferences SET commission_rate_bps=$1 WHERE singleton",
+      [rate],
+    );
     return { id: "00000000-0000-0000-0000-000000000001" };
   }
   if (action === "commission.pay") {
