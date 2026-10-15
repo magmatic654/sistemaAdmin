@@ -46,11 +46,16 @@ Anular conserva los identificadores ocupados y el historial.
 
 Las ventas manuales aparecen como **Requiere revisión**. `MAN-…` es una referencia
 interna, no un folio validado. La pestaña **Revisión** reúne las pendientes de
-cualquier fecha. La venta y su comisión siguen formando parte del cálculo del
-periodo, pero la comisión queda congelada y fuera de cualquier liquidación.
+cualquier fecha. La venta y su comisión quedan fuera de las ventas confirmadas
+y de la ganancia hasta aprobar o validar. El importe por revisar aparece separado
+para el periodo elegido; la cola mantiene todas las fechas. La comisión queda
+congelada y fuera de cualquier liquidación.
 El administrador puede aprobar la captura manual o buscar un folio/código y
 confirmar **Validar y actualizar** después de revisar el ticket real. Sin
 coincidencias no cambia el registro ni se libera la comisión.
+La revisión muestra desde el inicio artículos, cantidades, precios, subtotal,
+IVA, total, cliente, fecha, forma de pago y comisión. Los códigos y referencias
+quedan disponibles dentro de «Datos del registro».
 
 La validación actualiza únicamente el registro propio con fecha, cliente, forma
 de pago, artículos, subtotal, IVA y total del ticket; conserva un cobro completo.
@@ -128,12 +133,15 @@ Las variables privadas, respaldos y datos de QA quedan fuera de Git.
 
 ## Cifras y persistencia
 
-Ganancia = entradas − salidas − comisiones generadas en el período.
-La tarjeta Total de ventas usa las entradas del mismo periodo. Los gastos y
-comisiones se descuentan al registrarse, aunque estén pendientes de pago;
+Ganancia = ventas confirmadas − salidas − comisiones de ventas confirmadas en el período.
+La tarjeta Total de ventas usa sólo entradas aprobadas o validadas del mismo periodo.
+Las ventas por revisar y sus comisiones se muestran aparte; al aprobarlas entran
+en la fecha original, y al validarlas se utiliza la fecha y los importes del ticket.
+Los gastos y las comisiones de ventas confirmadas se descuentan aunque estén pendientes de pago;
 liquidarlos después no vuelve a descontarlos. Las anulaciones quedan fuera.
 Las ventas se registran con cobro completo al momento; no hay ventas a crédito
 ni abonos de clientes. Los saldos pendientes de proveedores abarcan todas las fechas.
+Las comisiones por pagar sólo incluyen las liberadas; las congeladas se separan.
 Los pagos parciales de salidas se ligan al gasto original y no crean otra compra.
 Los importes usan centavos.
 Las fechas comerciales corresponden a Ciudad de México; las semanas comienzan

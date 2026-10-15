@@ -173,7 +173,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
   }
   if (view === "revision")
     condition =
-      "l.kind='entrada' AND l.review_status='pending' AND l.voided_at IS NULL AND $1::date<=$2::date";
+      "l.kind='entrada' AND l.review_status='pending' AND NOT l.source_cancelled AND l.voided_at IS NULL AND $1::date<=$2::date";
   if (search) {
     values.push("%" + search.replace(/[\\%_]/g, "\\$&") + "%");
     condition += ` AND concat_ws(' ',l.concept,l.contact,l.source_folio,l.manual_folio,l.reference,l.employee_name) ILIKE $${values.length}`;
@@ -191,9 +191,12 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
   ] = await Promise.all([
     query(
       `SELECT
-      COALESCE(sum(total_cents) FILTER(WHERE kind='entrada' AND NOT source_cancelled AND voided_at IS NULL),0) AS income,
+      COALESCE(sum(total_cents) FILTER(WHERE kind='entrada' AND review_status IN ('approved','validated') AND NOT source_cancelled AND voided_at IS NULL),0) AS income,
       COALESCE(sum(total_cents) FILTER(WHERE kind='salida' AND voided_at IS NULL),0) AS expenses,
-      COALESCE(sum(commission_cents) FILTER(WHERE NOT source_cancelled AND voided_at IS NULL),0) AS commissions,
+      COALESCE(sum(commission_cents) FILTER(WHERE kind='entrada' AND review_status IN ('approved','validated') AND NOT source_cancelled AND voided_at IS NULL),0) AS commissions,
+      COALESCE(sum(total_cents) FILTER(WHERE kind='entrada' AND review_status='pending' AND NOT source_cancelled AND voided_at IS NULL),0) AS pending_income,
+      COALESCE(sum(commission_cents) FILTER(WHERE kind='entrada' AND review_status='pending' AND NOT source_cancelled AND voided_at IS NULL),0) AS pending_commissions,
+      count(*) FILTER(WHERE kind='entrada' AND review_status='pending' AND NOT source_cancelled AND voided_at IS NULL) AS pending_sales_count,
       count(*) FILTER(WHERE source_cancelled AND voided_at IS NULL) AS cancelled
       FROM administracion.manual_ledger WHERE date BETWEEN $1::date AND $2::date`,
       [from, to],
@@ -209,7 +212,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
       [from, to],
     ),
     query(`SELECT COALESCE(sum(total_cents-paid_cents) FILTER(WHERE kind='salida'),0) AS payable,
-      COALESCE(sum(commission_cents) FILTER(WHERE commission_paid_on IS NULL),0) AS employee_payable,
+      COALESCE(sum(commission_cents) FILTER(WHERE commission_paid_on IS NULL AND review_status IN ('approved','validated')),0) AS employee_payable,
       COALESCE(sum(commission_cents) FILTER(WHERE commission_paid_on IS NULL AND review_status='pending'),0) AS employee_frozen
       FROM administracion.manual_ledger WHERE voided_at IS NULL AND NOT source_cancelled`),
     query(
@@ -235,7 +238,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
       [from, to],
     ),
     query(
-      "SELECT count(*) AS count FROM administracion.movements WHERE kind='entrada' AND review_status='pending' AND voided_at IS NULL",
+      "SELECT count(*) AS count,COALESCE(sum(total_cents),0) AS total FROM administracion.manual_ledger WHERE kind='entrada' AND review_status='pending' AND NOT source_cancelled AND voided_at IS NULL",
     ),
   ]);
   const t = totals.rows[0],
@@ -245,6 +248,9 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     income: Number(t.income),
     expenses: Number(t.expenses),
     commissions: Number(t.commissions),
+    pendingIncome: Number(t.pending_income),
+    pendingCommissions: Number(t.pending_commissions),
+    pendingSalesCount: Number(t.pending_sales_count),
     cancelled: Number(t.cancelled),
     collected: Number(c.collected),
     paid: Number(c.paid),
@@ -264,6 +270,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     page,
     pageSize,
     reviewCount: Number(review.rows[0].count),
+    reviewTotal: Number(review.rows[0].total),
     employees: employees.rows,
     suppliers: suppliers.rows,
     range: { from, to },

@@ -83,6 +83,9 @@ export type Summary = {
   income: number;
   expenses: number;
   commissions: number;
+  pendingIncome: number;
+  pendingCommissions: number;
+  pendingSalesCount: number;
   collected: number;
   paid: number;
   commissionPaid: number;
@@ -119,6 +122,7 @@ export type AdminState = {
   page: number;
   pageSize: number;
   reviewCount: number;
+  reviewTotal: number;
   range: { from: string; to: string };
 };
 export type PayoutPreview = {

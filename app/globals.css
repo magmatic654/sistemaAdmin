@@ -3281,3 +3281,293 @@ th {
     white-space: normal;
   }
 }
+
+/* A sale awaiting approval stays visibly outside the confirmed calculation. */
+.history-title {
+  scroll-margin-top: 24px;
+  font-size: 23px;
+}
+.review-period-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px 24px;
+  margin-top: 20px;
+  padding: 18px 22px;
+  border: 1px solid #ebd7bd;
+  border-left: 4px solid var(--amber);
+  border-radius: 10px;
+  background: #fffaf4;
+}
+.review-period-copy {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, auto);
+  align-items: baseline;
+  gap: 4px 20px;
+  min-width: 0;
+}
+.review-period-copy > span {
+  color: var(--amber);
+  font-size: 18px;
+  font-weight: 600;
+}
+.review-period-copy > strong {
+  color: var(--amber);
+  font-size: 28px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.review-period-copy > small {
+  grid-column: 1 / -1;
+  color: var(--secondary);
+  font-size: 16px;
+}
+.review-period-summary .review-action,
+.review-sale-footer .review-action {
+  flex: 0 1 auto;
+  min-height: 52px;
+  border-color: #cfa77a;
+  color: var(--amber);
+  white-space: normal;
+}
+.review-action > svg {
+  flex: none;
+}
+.review-queue-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin-bottom: 20px;
+}
+.review-queue-heading > div {
+  min-width: 0;
+}
+.review-queue-heading h2 {
+  font-size: 24px;
+}
+.review-queue-heading p {
+  margin-top: 4px;
+  color: var(--secondary);
+  font-size: 16px;
+}
+.review-queue-heading > strong {
+  max-width: 100%;
+  color: var(--amber);
+  font-size: 30px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.review-sales-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 20px;
+}
+.review-sale-card {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.review-sale-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 20px;
+}
+.review-sale-topline time {
+  color: var(--secondary);
+  font-size: 16px;
+}
+.review-sale-topline .pill,
+.review-record .pill,
+.review-record small,
+.review-commission-note {
+  font-size: 16px;
+}
+.review-sale-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.review-sale-items > li + li {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule-soft);
+}
+.review-sale-items h3 {
+  font-size: 20px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.review-line-prices {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 6px;
+  font-size: 17px;
+}
+.review-line-prices > span {
+  color: var(--secondary);
+}
+.review-line-prices > strong {
+  max-width: 100%;
+  font-size: 19px;
+  overflow-wrap: anywhere;
+}
+.review-extra-items {
+  margin-top: 12px;
+}
+.review-extra-items > summary {
+  padding-block: 12px;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.review-extra-items[open] > summary {
+  margin-bottom: 8px;
+}
+.review-sale-facts,
+.sale-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0 0;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule-soft);
+}
+.review-sale-facts > div,
+.sale-facts > div {
+  min-width: 0;
+}
+.review-sale-facts dt,
+.sale-facts dt {
+  margin-bottom: 4px;
+  color: var(--secondary);
+  font-size: 16px;
+}
+.review-sale-facts dd,
+.sale-facts dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 600;
+}
+.review-commission-fact dd strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--amber);
+  font-size: 19px;
+}
+.review-sale-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+.review-sale-footer > div {
+  min-width: 0;
+}
+.review-sale-footer > div > span {
+  display: block;
+  color: var(--secondary);
+  font-size: 16px;
+}
+.review-sale-footer > div > strong {
+  display: block;
+  max-width: 100%;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 28px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.movement-more-items {
+  display: block;
+  margin-top: 4px;
+}
+.sale-facts {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.record-details {
+  min-width: 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+.record-details > summary {
+  min-height: 52px;
+  padding: 12px 0;
+  color: var(--secondary);
+  font-size: 18px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.record-details[open] > summary {
+  margin-bottom: 8px;
+}
+.record-details > :not(summary) {
+  margin-bottom: 16px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.review-decisions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.review-decisions > .button {
+  flex: 1 1 220px;
+  min-height: 52px;
+  white-space: normal;
+}
+@media (max-width: 1100px) {
+  .review-sales-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 700px) {
+  .review-period-summary {
+    padding: 16px;
+  }
+  .review-period-copy {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+  .review-period-copy > small {
+    margin-top: 2px;
+  }
+  .review-period-summary .review-action {
+    width: 100%;
+  }
+  .review-sale-card {
+    padding: 18px;
+  }
+  .review-sale-facts,
+  .sale-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+  .review-sale-footer .review-action {
+    width: 100%;
+  }
+  .review-decisions > .button {
+    flex-basis: 100%;
+  }
+}

@@ -38,6 +38,56 @@ export const methodOptions = [
   { value: "tarjeta", label: "Tarjeta" },
   { value: "otro", label: "Otro" },
 ];
+function paymentLabel(value: string) {
+  return (
+    methodOptions.find((option) => option.value === value)?.label || "Otro"
+  );
+}
+
+function RecordDetails({ movement }: { movement: Movement }) {
+  return (
+    <details className="record-details">
+      <summary>Datos del registro</summary>
+      <dl className="detail-grid">
+        <div>
+          <dt>Registro</dt>
+          <dd>
+            {movement.source_folio
+              ? `Ticket ${movement.source_folio} · Sistema ${movement.source_origin === "blanca" ? "blanco" : "negro"}`
+              : movement.kind === "entrada"
+                ? "Venta manual · Sin ticket validado"
+                : "Registro manual"}
+          </dd>
+        </div>
+        <div>
+          <dt>Categoría</dt>
+          <dd>{movement.category}</dd>
+        </div>
+        {!!(movement.reference || movement.manual_folio) && (
+          <div className="wide">
+            <dt>{movement.source_id ? "Referencia" : "Referencia interna"}</dt>
+            <dd>{movement.reference || movement.manual_folio}</dd>
+          </div>
+        )}
+        {movement.source_id && (
+          <div className="wide">
+            <dt>Código de venta</dt>
+            <dd className="ticket-id">
+              LLA1:{movement.source_kind === "ventas" ? "V" : "P"}:
+              {movement.source_id}
+            </dd>
+          </div>
+        )}
+        {movement.manual_ticket_code && (
+          <div className="wide">
+            <dt>Código del ticket</dt>
+            <dd className="ticket-id">{movement.manual_ticket_code}</dd>
+          </div>
+        )}
+      </dl>
+    </details>
+  );
+}
 export const expenseCategories = [
   "Gasto operativo",
   "Gasto administrativo",
@@ -1025,11 +1075,16 @@ export function TicketLookup({
               onClick={() => onSelect(sale)}
             >
               <div>
-                <strong>{sale.folio}</strong>
+                <strong>
+                  {sale.items
+                    .map((item) => `${item.quantity} × ${item.description}`)
+                    .join(" · ")}
+                </strong>
                 <small>
-                  {sale.contact} · {shortDate(sale.date)} · Sistema{" "}
-                  {sale.origin === "blanca" ? "blanco" : "negro"}
+                  {sale.contact} · {shortDate(sale.date)} ·{" "}
+                  {paymentLabel(sale.method)}
                 </small>
+                <small>Folio {sale.folio}</small>
                 <span className="hint">
                   {sale.cancelled
                     ? "Ticket cancelado"
@@ -1061,6 +1116,7 @@ export function SaleReviewForm({
 }) {
   const [source, setSource] = useState<Sale | null>(null),
     [manualApproval, setManualApproval] = useState(false),
+    [findingTicket, setFindingTicket] = useState(false),
     [confirmed, setConfirmed] = useState(false),
     [commissionValue, setCommissionValue] = useState("");
   const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -1087,6 +1143,7 @@ export function SaleReviewForm({
     setManualApproval(false);
     setConfirmed(false);
     setCommissionValue("");
+    setFindingTicket(true);
   }
   return (
     <div className="sale-review">
@@ -1105,26 +1162,76 @@ export function SaleReviewForm({
                 ? "Requiere revisión"
                 : "Manual aprobada"}
             </span>
-            <strong>{movement.concept}</strong>
+            <h3 tabIndex={-1} data-autofocus>
+              {movement.concept}
+            </h3>
             <small>
-              Referencia interna: {movement.reference || movement.manual_folio}
+              {movement.review_status === "pending"
+                ? "No incluida en ventas ni ganancias"
+                : "Aprobada sin ticket"}
             </small>
-            <small>Sin folio validado · {shortDate(movement.date)}</small>
           </div>
           <strong className="number">{money(movement.total_cents)}</strong>
         </div>
+        <dl className="sale-facts">
+          <div>
+            <dt>Cliente</dt>
+            <dd>{movement.contact || "Público general"}</dd>
+          </div>
+          <div>
+            <dt>Fecha</dt>
+            <dd>{shortDate(movement.date)}</dd>
+          </div>
+          <div>
+            <dt>Forma de pago</dt>
+            <dd>{paymentLabel(movement.method)}</dd>
+          </div>
+          <div>
+            <dt>Comisión</dt>
+            <dd>
+              {movement.commission_id
+                ? `${money(movement.commission_cents || 0)} · ${movement.employee_name}`
+                : "Sin comisión"}
+            </dd>
+          </div>
+        </dl>
+        <SaleBreakdown
+          items={movement.items}
+          subtotal={movement.subtotal_cents}
+          tax={movement.tax_cents}
+          total={movement.total_cents}
+        />
         {movement.review_status === "pending" &&
           movement.commission_id &&
           !movement.commission_paid_on && (
             <div className="review-commission-note">
               <LockKeyhole size={18} />
-              Comisión congelada: {money(movement.commission_cents || 0)} ·{" "}
-              {movement.employee_name}
+              Comisión en espera de aprobación
             </div>
           )}
         {!source && !manualApproval && (
           <>
-            {canLink ? (
+            <div className="review-decisions">
+              {movement.review_status === "pending" && (
+                <button
+                  type="button"
+                  className="button primary"
+                  onClick={() => setManualApproval(true)}
+                >
+                  Aprobar sin ticket
+                </button>
+              )}
+              {canLink && !findingTicket && (
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setFindingTicket(true)}
+                >
+                  Buscar ticket
+                </button>
+              )}
+            </div>
+            {canLink && findingTicket ? (
               <TicketLookup
                 compact
                 allowedMovementId={movement.id}
@@ -1133,22 +1240,11 @@ export function SaleReviewForm({
                   setConfirmed(false);
                 }}
               />
-            ) : (
+            ) : !canLink ? (
               <p className="warning">
                 La comisión ya fue pagada. No se puede reemplazar esta venta.
               </p>
-            )}
-            {movement.review_status === "pending" && (
-              <div className="manual-approval-option">
-                <button
-                  type="button"
-                  className="text-button"
-                  onClick={() => setManualApproval(true)}
-                >
-                  Aprobar sin ticket
-                </button>
-              </div>
-            )}
+            ) : null}
           </>
         )}
         {source && (
@@ -1157,14 +1253,13 @@ export function SaleReviewForm({
               <div>
                 <span className="eyebrow">TICKET ENCONTRADO</span>
                 <h3 ref={reviewHeadingRef} tabIndex={-1}>
-                  {source.folio}
+                  Datos del ticket
                 </h3>
                 <p>
                   {source.contact} · {shortDate(source.date)}
                 </p>
                 <small>
-                  Sistema {source.origin === "blanca" ? "blanco" : "negro"} ·{" "}
-                  {source.method}
+                  {paymentLabel(source.method)} · Folio {source.folio}
                 </small>
               </div>
               <button
@@ -1214,14 +1309,8 @@ export function SaleReviewForm({
                 Buscar ticket
               </button>
             </div>
-            <SaleBreakdown
-              items={movement.items}
-              subtotal={movement.subtotal_cents}
-              tax={movement.tax_cents}
-              total={movement.total_cents}
-            />
             <p className="review-replacement-note">
-              Conserva los datos manuales y queda sin folio validado.
+              Confirma lo capturado para incluir esta venta en el Resumen.
             </p>
           </>
         )}
@@ -1249,32 +1338,26 @@ export function SaleReviewForm({
             }}
           >
             <fieldset className="form-stack" disabled={busy}>
-              {movement.commission_id && (
+              {correctionRequired && (
                 <div className="review-commission-confirm">
                   <strong>Comisión · {movement.employee_name}</strong>
-                  {correctionRequired ? (
-                    <label>
-                      Nuevo monto de comisión
-                      <input
-                        value={commissionValue}
-                        onChange={(event) =>
-                          setCommissionValue(event.target.value)
-                        }
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        required
-                        aria-invalid={!!commissionValue && !validCorrection}
-                      />
-                      <small>
-                        Máximo {money(source!.totalCents)}. La comisión actual
-                        supera el ticket.
-                      </small>
-                    </label>
-                  ) : (
-                    <span className="number">
-                      {money(movement.commission_cents || 0)}
-                    </span>
-                  )}
+                  <label>
+                    Nuevo monto de comisión
+                    <input
+                      value={commissionValue}
+                      onChange={(event) =>
+                        setCommissionValue(event.target.value)
+                      }
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      required
+                      aria-invalid={!!commissionValue && !validCorrection}
+                    />
+                    <small>
+                      Máximo {money(source!.totalCents)}. La comisión actual
+                      supera el ticket.
+                    </small>
+                  </label>
                 </div>
               )}
               <label className="check-label review-confirmation">
@@ -1301,6 +1384,7 @@ export function SaleReviewForm({
             {error}
           </div>
         )}
+        <RecordDetails movement={movement} />
       </div>
       <footer className="modal-footer">
         <button
@@ -1835,67 +1919,41 @@ export function DetailView({
             {movement.kind === "entrada" ? "ENTRADA" : "SALIDA"} ·{" "}
             {shortDate(movement.date)}
           </span>
-          <h3>{movement.contact || movement.category}</h3>
-          <p>{movement.concept}</p>
+          <h3>{movement.concept}</h3>
+          <p>{movement.contact || movement.category}</p>
         </div>
         <strong className="number">{money(movement.total_cents)}</strong>
       </div>
-      <dl className="detail-grid">
+      <dl className="sale-facts">
         <div>
-          <dt>
-            {movement.kind === "entrada" && !movement.source_id
-              ? "Registro"
-              : "Origen"}
-          </dt>
+          <dt>Fecha</dt>
+          <dd>{shortDate(movement.date)}</dd>
+        </div>
+        <div>
+          <dt>{movement.kind === "entrada" ? "Cliente" : "Proveedor"}</dt>
           <dd>
-            {movement.source_folio
-              ? `${movement.source_folio} · Sistema ${movement.source_origin === "blanca" ? "blanco" : "negro"}`
-              : movement.kind === "entrada"
-                ? "Manual · Sin folio validado"
-                : "Registro manual"}
+            {movement.contact ||
+              (movement.kind === "entrada"
+                ? "Público general"
+                : "Sin proveedor")}
           </dd>
         </div>
         <div>
-          <dt>Tipo</dt>
-          <dd>{movement.category}</dd>
+          <dt>Forma de pago</dt>
+          <dd>{paymentLabel(movement.method)}</dd>
         </div>
         <div>
-          <dt>
-            {movement.kind === "entrada" && !movement.source_id
-              ? "Referencia interna"
-              : "Referencia"}
-          </dt>
-          <dd>{movement.reference || "Sin referencia"}</dd>
-        </div>
-        <div>
-          <dt>
-            {movement.kind === "entrada" ? "Total cobrado" : "Saldo pendiente"}
-          </dt>
+          <dt>{movement.kind === "entrada" ? "Estado" : "Saldo pendiente"}</dt>
           <dd className="number">
             {inactive
               ? "No aplica"
-              : money(
-                  movement.kind === "entrada"
-                    ? movement.paid_cents
-                    : movement.total_cents - movement.paid_cents,
-                )}
+              : movement.kind === "entrada"
+                ? movement.review_status === "pending"
+                  ? "Por revisar"
+                  : "Confirmada"
+                : money(movement.total_cents - movement.paid_cents)}
           </dd>
         </div>
-        {movement.source_id && (
-          <div className="wide">
-            <dt>ID de venta</dt>
-            <dd className="ticket-id">
-              LLA1:{movement.source_kind === "ventas" ? "V" : "P"}:
-              {movement.source_id}
-            </dd>
-          </div>
-        )}
-        {movement.manual_ticket_code && (
-          <div className="wide">
-            <dt>ID del ticket</dt>
-            <dd className="ticket-id">{movement.manual_ticket_code}</dd>
-          </div>
-        )}
       </dl>
       <SaleBreakdown
         items={movement.items}
@@ -1916,12 +1974,12 @@ export function DetailView({
           </span>
         </div>
       )}
-      <div>
-        <h3>
+      <details className="record-details">
+        <summary>
           {movement.kind === "entrada"
-            ? "Cobros registrados"
+            ? "Pago registrado"
             : "Pagos registrados"}
-        </h3>
+        </summary>
         {payments.length ? (
           <div className="payment-history">
             {payments.map((payment) => (
@@ -1929,7 +1987,7 @@ export function DetailView({
                 <span>
                   {shortDate(payment.date)}
                   <small>
-                    {payment.method}
+                    {paymentLabel(payment.method)}
                     {payment.reference ? " · " + payment.reference : ""}
                   </small>
                 </span>
@@ -1942,7 +2000,8 @@ export function DetailView({
         ) : (
           <p className="hint">Aún no hay pagos registrados.</p>
         )}
-      </div>
+      </details>
+      <RecordDetails movement={movement} />
       {movement.notes && (
         <div className="notes">
           <span className="eyebrow">NOTA ADICIONAL</span>

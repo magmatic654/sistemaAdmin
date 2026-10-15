@@ -18,6 +18,12 @@
 - Toda venta manual sin ticket validado requiere revisión. Su referencia interna
   no es un folio de origen. Congelar su comisión hasta aprobación manual explícita
   o validación de ticket; aplicar esta regla también en pagos individuales y lotes.
+- Las ventas por revisar y sus comisiones no entran en ventas confirmadas ni en
+  la ganancia. Mostrar su importe aparte por periodo y distinguirlo de la cola
+  global. Las comisiones por pagar sólo incluyen ventas aprobadas o validadas.
+- Mostrar producto, cantidad, precios, cliente, fecha, pago y comisión antes de
+  pedir una decisión de revisión. Dejar códigos y referencias internas en un
+  desplegable secundario; no usarlos como nombre de una venta en las listas.
 - Validar un ticket requiere mostrar los datos reales y confirmar su actualización
   en Administración. Conservar auditoría y alias anteriores para evitar duplicados;
   una búsqueda sin coincidencias no aprueba ni altera la venta. No reescribir

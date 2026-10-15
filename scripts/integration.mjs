@@ -1293,7 +1293,7 @@ try {
     position: "Técnico",
   });
   async function accountingMovement(kind, date, amount, extra = {}) {
-    return run("movement.create", {
+    const saved = await run("movement.create", {
       kind,
       date,
       manual: kind === "entrada",
@@ -1315,6 +1315,9 @@ try {
       commission: null,
       ...extra,
     });
+    // These fixtures exercise confirmed accounting; pending captures have separate coverage below.
+    if (kind === "entrada") await approve(saved.id);
+    return saved;
   }
   async function accountingSummary(from, to = from) {
     const { summary } = await getState(new URLSearchParams({ from, to }));
@@ -1407,7 +1410,6 @@ try {
     });
     const commissionId = (await movementDetail(accountingSale.id)).movement
       .commission_id;
-    await approve(accountingSale.id);
     await run("commission.pay", { id: commissionId, date: "2002-02-10" });
     assert.deepEqual(
       await accountingSummary("2002-01-01", "2002-01-31"),
@@ -1537,7 +1539,7 @@ try {
       ...extra,
     };
   }
-  await test("manual sales start pending, remain in financial totals and appear in the global review queue", async () => {
+  await test("manual sales stay outside confirmed totals and appear separately in their period and the global review queue", async () => {
     const compact = await run("sale.manual.create", {
       description: "Revisión compacta QA",
       quantity: 1,
@@ -1565,18 +1567,28 @@ try {
     assert.ok(
       queue.movements.every((movement) => movement.review_status === "pending"),
     );
-    const count = (
+    const pending = (
       await connection.query(
-        "SELECT count(*) FROM administracion.movements WHERE kind='entrada' AND review_status='pending' AND voided_at IS NULL",
+        "SELECT count(*),COALESCE(sum(total_cents),0) AS total FROM administracion.manual_ledger WHERE kind='entrada' AND review_status='pending' AND NOT source_cancelled AND voided_at IS NULL",
       )
-    ).rows[0].count;
-    assert.equal(queue.reviewCount, Number(count));
+    ).rows[0];
+    assert.equal(queue.reviewCount, Number(pending.count));
+    assert.equal(queue.reviewTotal, Number(pending.total));
+    assert.equal(queue.summary.pendingIncome, 0);
+    assert.equal(queue.summary.pendingCommissions, 0);
+    assert.equal(queue.summary.pendingSalesCount, 0);
     const state = await getState(
       new URLSearchParams({ from: "2003-01-15", to: "2003-01-15" }),
     );
-    assert.equal(state.summary.income, 11600);
-    assert.equal(state.summary.commissions, 1160);
-    assert.equal(state.summary.profit, 10440);
+    assert.equal(state.summary.income, 0);
+    assert.equal(state.summary.commissions, 0);
+    assert.equal(state.summary.profit, 0);
+    assert.equal(state.summary.pendingIncome, 11600);
+    assert.equal(state.summary.pendingCommissions, 1160);
+    assert.equal(state.summary.pendingSalesCount, 1);
+    assert.equal(state.summary.collected, 11600);
+    assert.equal(state.summary.cash, 11600);
+    assert.equal(state.reviewTotal, queue.reviewTotal);
     assert.ok(state.summary.employeeFrozen >= 1160);
     await run("movement.void", {
       id: saved.id,
@@ -1584,14 +1596,106 @@ try {
     });
     const refreshed = await getState(unrelated);
     assert.equal(refreshed.reviewCount, queue.reviewCount - 1);
+    assert.equal(refreshed.reviewTotal, queue.reviewTotal - 11600);
+    const voided = await getState(
+      new URLSearchParams({ from: "2003-01-15", to: "2003-01-15" }),
+    );
+    assert.equal(voided.summary.pendingIncome, 0);
+    assert.equal(voided.summary.pendingCommissions, 0);
+    assert.equal(voided.summary.pendingSalesCount, 0);
     assert.equal(
       refreshed.movements.some((movement) => movement.id === saved.id),
       false,
     );
   });
+  await test("confirmed sales and active expenses determine profit while pending sales and frozen commissions stay separate", async () => {
+    const totalsEmployee = await run("employee.save", {
+      name: "Totales confirmados QA",
+      phone: "",
+      position: "Técnico",
+    });
+    const date = "2004-01-15";
+    const period = new URLSearchParams({ from: date, to: date });
+    const before = await getState(period);
+    const pending = await reviewSale({
+      date,
+      commission: { employeeId: totalsEmployee.id, value: "11.60" },
+    });
+    const confirmed = await reviewSale({
+      date,
+      items: [
+        { description: "Venta aprobada QA", quantity: 1, unitPrice: "300" },
+      ],
+      received: "300",
+      commission: { employeeId: totalsEmployee.id, value: "30" },
+    });
+    await approve(confirmed.id);
+    await accountingMovement("salida", date, "100");
+    let state = await getState(period);
+    assert.equal(state.summary.income, 30000);
+    assert.equal(state.summary.expenses, 10000);
+    assert.equal(state.summary.commissions, 3000);
+    assert.equal(state.summary.profit, 17000);
+    assert.equal(state.summary.pendingIncome, 11600);
+    assert.equal(state.summary.pendingCommissions, 1160);
+    assert.equal(state.summary.pendingSalesCount, 1);
+    assert.equal(state.reviewCount, before.reviewCount + 1);
+    assert.equal(state.reviewTotal, before.reviewTotal + 11600);
+    assert.equal(
+      state.summary.employeePayable,
+      before.summary.employeePayable + 3000,
+    );
+    assert.equal(
+      state.summary.employeeFrozen,
+      before.summary.employeeFrozen + 1160,
+    );
+    const payout = await payoutPreview(totalsEmployee.id, "all", day);
+    assert.equal(payout.totalCents, 3000);
+    assert.equal(payout.commissions.length, 1);
+    assert.equal(payout.commissions[0].movement_id, confirmed.id);
+    assert.equal(payout.frozenCents, 1160);
+    const outside = await getState(
+      new URLSearchParams({
+        from: "2099-01-01",
+        to: "2099-01-31",
+        view: "revision",
+      }),
+    );
+    assert.equal(outside.summary.pendingIncome, 0);
+    assert.equal(outside.summary.pendingSalesCount, 0);
+    assert.equal(outside.reviewTotal, state.reviewTotal);
+    assert.equal(outside.reviewCount, state.reviewCount);
+    assert.ok(outside.movements.some((movement) => movement.id === pending.id));
+    await run("movement.void", {
+      id: pending.id,
+      reason: "Descartar captura pendiente QA",
+    });
+    state = await getState(period);
+    assert.equal(state.summary.income, 30000);
+    assert.equal(state.summary.expenses, 10000);
+    assert.equal(state.summary.commissions, 3000);
+    assert.equal(state.summary.profit, 17000);
+    assert.equal(state.summary.pendingIncome, 0);
+    assert.equal(state.summary.pendingCommissions, 0);
+    assert.equal(state.summary.pendingSalesCount, 0);
+    assert.equal(state.reviewTotal, before.reviewTotal);
+    assert.equal(state.reviewCount, before.reviewCount);
+    assert.equal(state.summary.employeeFrozen, before.summary.employeeFrozen);
+  });
   await test("frozen commissions cannot be paid individually, by IDs or by a settlement snapshot", async () => {
     const saved = await reviewSale();
     const detail = await movementDetail(saved.id);
+    const reviewPeriod = new URLSearchParams({
+      from: "2003-01-15",
+      to: "2003-01-15",
+    });
+    const beforeApproval = await getState(reviewPeriod);
+    assert.equal(beforeApproval.summary.income, 0);
+    assert.equal(beforeApproval.summary.commissions, 0);
+    assert.equal(beforeApproval.summary.profit, 0);
+    assert.equal(beforeApproval.summary.pendingIncome, 11600);
+    assert.equal(beforeApproval.summary.pendingCommissions, 1160);
+    assert.equal(beforeApproval.summary.pendingSalesCount, 1);
     const preview = await payoutPreview(reviewEmployee.id, "all", day);
     assert.equal(preview.commissions.length, 0);
     assert.equal(preview.totalCents, 0);
@@ -1630,6 +1734,24 @@ try {
       run("movement.review.approve", payload),
       /cambi|revisi|aprobad/i,
     );
+    const afterApproval = await getState(reviewPeriod);
+    assert.equal(afterApproval.summary.income, 11600);
+    assert.equal(afterApproval.summary.commissions, 1160);
+    assert.equal(afterApproval.summary.profit, 10440);
+    assert.equal(afterApproval.summary.pendingIncome, 0);
+    assert.equal(afterApproval.summary.pendingCommissions, 0);
+    assert.equal(afterApproval.summary.pendingSalesCount, 0);
+    assert.equal(afterApproval.reviewTotal, beforeApproval.reviewTotal - 11600);
+    assert.equal(afterApproval.reviewCount, beforeApproval.reviewCount - 1);
+    assert.equal(
+      afterApproval.summary.employeePayable,
+      beforeApproval.summary.employeePayable + 1160,
+    );
+    assert.equal(
+      afterApproval.summary.employeeFrozen,
+      beforeApproval.summary.employeeFrozen - 1160,
+    );
+    assert.equal(afterApproval.summary.cash, beforeApproval.summary.cash);
     const released = await payoutPreview(reviewEmployee.id, "all", day);
     assert.equal(released.commissions.length, 1);
     assert.equal(released.totalCents, 1160);
@@ -1709,6 +1831,17 @@ try {
     });
     const before = await movementDetail(saved.id);
     const sourceId = await ticket("blanca");
+    const oldPeriod = new URLSearchParams({
+      from: before.movement.date,
+      to: before.movement.date,
+    });
+    const oldTotals = await getState(oldPeriod);
+    const sourceTotals = await getState(params);
+    const sourceBefore = (
+      await sourceWriter.query("SELECT * FROM public.ventas WHERE id=$1", [
+        sourceId,
+      ])
+    ).rows[0];
     const payload = await validationPayload(saved.id, sourceId),
       request = randomUUID();
     const validated = await run("movement.review.validate", payload, request);
@@ -1743,6 +1876,53 @@ try {
     assert.equal(detail.payments.length, 1);
     assert.equal(detail.payments[0].id, before.payments[0].id);
     assert.equal(detail.payments[0].amount_cents, 23200);
+    const oldAfter = await getState(oldPeriod);
+    const sourceAfter = await getState(params);
+    assert.equal(oldAfter.summary.income, oldTotals.summary.income);
+    assert.equal(oldAfter.summary.commissions, oldTotals.summary.commissions);
+    assert.equal(oldAfter.summary.profit, oldTotals.summary.profit);
+    assert.equal(
+      oldAfter.summary.pendingIncome,
+      oldTotals.summary.pendingIncome - 11600,
+    );
+    assert.equal(
+      oldAfter.summary.pendingCommissions,
+      oldTotals.summary.pendingCommissions - 1160,
+    );
+    assert.equal(
+      oldAfter.summary.pendingSalesCount,
+      oldTotals.summary.pendingSalesCount - 1,
+    );
+    assert.equal(
+      sourceAfter.summary.income,
+      sourceTotals.summary.income + 23200,
+    );
+    assert.equal(
+      sourceAfter.summary.commissions,
+      sourceTotals.summary.commissions + 1160,
+    );
+    assert.equal(
+      sourceAfter.summary.profit,
+      sourceTotals.summary.profit + 22040,
+    );
+    assert.equal(sourceAfter.reviewTotal, sourceTotals.reviewTotal - 11600);
+    assert.equal(sourceAfter.reviewCount, sourceTotals.reviewCount - 1);
+    assert.equal(
+      sourceAfter.summary.employeePayable,
+      sourceTotals.summary.employeePayable + 1160,
+    );
+    assert.equal(
+      sourceAfter.summary.employeeFrozen,
+      sourceTotals.summary.employeeFrozen - 1160,
+    );
+    assert.deepEqual(
+      (
+        await sourceWriter.query("SELECT * FROM public.ventas WHERE id=$1", [
+          sourceId,
+        ])
+      ).rows[0],
+      sourceBefore,
+    );
     const changes = (
       await connection.query(
         "SELECT details FROM administracion.audit WHERE entity_id=$1 AND action='movement.review.validate.changes'",

@@ -38,6 +38,7 @@ import {
   PaymentForm,
   TicketLookup,
   SaleReviewForm,
+  methodOptions,
   type Write,
 } from "./forms";
 
@@ -67,10 +68,10 @@ const sections = [
 ];
 const panels = [
   { id: "ventas" as const, label: "Ventas" },
-  { id: "salidas" as const, label: "Salidas" },
+  { id: "salidas" as const, label: "Gastos" },
   { id: "proveedores" as const, label: "Proveedores" },
   { id: "comisiones" as const, label: "Comisiones" },
-  { id: "revision" as const, label: "Revisión" },
+  { id: "revision" as const, label: "Por revisar" },
 ];
 
 function Status({ m }: { m: Movement }) {
@@ -93,7 +94,7 @@ function Status({ m }: { m: Movement }) {
         ? "Anulado"
         : m.paid_cents >= m.total_cents
           ? m.kind === "entrada"
-            ? "Cobrado"
+            ? "Confirmada"
             : "Pagado"
           : m.paid_cents
             ? "Parcial"
@@ -132,6 +133,7 @@ export default function Dashboard({ today }: { today: string }) {
     [selection],
   );
   const fetchId = useRef(0);
+  const historyRef = useRef<HTMLHeadingElement>(null);
   const view =
     section === "empleados"
       ? "comisiones"
@@ -193,9 +195,21 @@ export default function Dashboard({ today }: { today: string }) {
     setPage(1);
     window.history.replaceState(null, "", "?seccion=" + value);
   }
-  function choosePanel(value: Panel) {
+  function choosePanel(value: Panel, reveal = false) {
     setPanel(value);
     setPage(1);
+    if (reveal) {
+      window.requestAnimationFrame(() => {
+        historyRef.current?.focus({ preventScroll: true });
+        historyRef.current?.scrollIntoView({
+          block: "start",
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
+            .matches
+            ? "auto"
+            : "smooth",
+        });
+      });
+    }
   }
   const write: Write = useCallback(async (action, payload, requestId) => {
     setWriting(true);
@@ -281,14 +295,7 @@ export default function Dashboard({ today }: { today: string }) {
                 <tr key={m.id} role="row">
                   <td role="cell" data-label="Fecha" className="mobile-wide">
                     {shortDate(m.date)}
-                    <small>
-                      {m.source_folio || m.reference}
-                      {m.kind === "entrada" && !m.source_id && (
-                        <span className="manual-reference">
-                          Sin folio validado
-                        </span>
-                      )}
-                    </small>
+                    {m.source_folio && <small>Ticket {m.source_folio}</small>}
                   </td>
                   <td
                     role="cell"
@@ -300,10 +307,18 @@ export default function Dashboard({ today }: { today: string }) {
                     <button className="row-link" onClick={() => void detail(m)}>
                       {panel === "proveedores"
                         ? m.contact || m.concept
-                        : m.concept}
+                        : m.kind === "entrada"
+                          ? m.items[0]?.description || m.concept
+                          : m.concept}
                     </button>
                     <small>
                       {panel === "proveedores" ? m.concept : m.contact}
+                      {m.kind === "entrada" && m.items.length > 1 && (
+                        <span className="movement-more-items">
+                          + {m.items.length - 1} artículo
+                          {m.items.length > 2 ? "s" : ""}
+                        </span>
+                      )}
                     </small>
                   </td>
                   <td role="cell" data-label="Estado">
@@ -330,14 +345,7 @@ export default function Dashboard({ today }: { today: string }) {
                     aria-label="Acciones"
                     className="align-right mobile-wide"
                   >
-                    {panel === "revision" ? (
-                      <button
-                        className="button secondary small review-action"
-                        onClick={() => void detail(m, true)}
-                      >
-                        Revisar
-                      </button>
-                    ) : panel === "proveedores" ? (
+                    {panel === "proveedores" ? (
                       <button
                         className="button secondary small"
                         onClick={() =>
@@ -350,8 +358,7 @@ export default function Dashboard({ today }: { today: string }) {
                       <button
                         className="icon-button"
                         aria-label={
-                          "Ver " +
-                          (m.source_folio || m.manual_folio || m.concept)
+                          "Ver " + (m.items[0]?.description || m.concept)
                         }
                         onClick={() => void detail(m)}
                       >
@@ -366,33 +373,152 @@ export default function Dashboard({ today }: { today: string }) {
           </table>
         </div>
         {!data?.movements.length && <div className="empty">Sin registros</div>}
-        {!!data?.total && (
-          <div className="pagination">
-            <span>
-              {(page - 1) * data.pageSize + 1}–
-              {Math.min(page * data.pageSize, data.total)} de {data.total}
-            </span>
-            <div>
-              <button
-                className="icon-button"
-                aria-label="Página anterior"
-                disabled={page === 1}
-                onClick={() => setPage(page - 1)}
-              >
-                <ChevronLeft size={22} />
-              </button>
-              <button
-                className="icon-button"
-                aria-label="Página siguiente"
-                disabled={page * data.pageSize >= data.total}
-                onClick={() => setPage(page + 1)}
-              >
-                <ChevronRight size={22} />
-              </button>
-            </div>
-          </div>
-        )}
+        {pageControls()}
       </div>
+    );
+  }
+
+  function pageControls() {
+    return (
+      !!data?.total && (
+        <div className="pagination">
+          <span>
+            {(page - 1) * data.pageSize + 1}–
+            {Math.min(page * data.pageSize, data.total)} de {data.total}
+          </span>
+          <div>
+            <button
+              className="icon-button"
+              aria-label="Página anterior"
+              disabled={page === 1}
+              onClick={() => setPage(page - 1)}
+            >
+              <ChevronLeft size={22} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Página siguiente"
+              disabled={page * data.pageSize >= data.total}
+              onClick={() => setPage(page + 1)}
+            >
+              <ChevronRight size={22} />
+            </button>
+          </div>
+        </div>
+      )
+    );
+  }
+
+  function reviewList() {
+    return (
+      <section
+        className="review-queue"
+        aria-label="Ventas por revisar de todas las fechas"
+      >
+        <div className="review-queue-heading">
+          <div>
+            <h2>Ventas por revisar</h2>
+            <p>
+              {data!.reviewCount} {data!.reviewCount === 1 ? "venta" : "ventas"}{" "}
+              · Todas las fechas
+            </p>
+          </div>
+          <strong className="number">{money(data!.reviewTotal)}</strong>
+        </div>
+        <div className="review-sales-list">
+          {data?.movements.map((m) => {
+            const lines = m.items.length
+              ? m.items
+              : [
+                  {
+                    description: m.concept,
+                    quantity: 1,
+                    unitCents: m.total_cents,
+                    totalCents: m.total_cents,
+                  },
+                ];
+            const renderLine = (
+              line: Movement["items"][number],
+              index: number,
+            ) => (
+              <li key={index}>
+                <h3>{line.description}</h3>
+                <div className="review-line-prices">
+                  <span>
+                    {line.quantity} × {money(line.unitCents)}
+                  </span>
+                  <strong className="number">{money(line.totalCents)}</strong>
+                </div>
+              </li>
+            );
+            return (
+              <article className="review-sale-card" key={m.id}>
+                <div className="review-sale-topline">
+                  <span className="pill review-pill">Requiere revisión</span>
+                  <time dateTime={m.date}>{shortDate(m.date)}</time>
+                </div>
+                <ul className="review-sale-items">
+                  {lines.slice(0, 3).map(renderLine)}
+                </ul>
+                {lines.length > 3 && (
+                  <details className="review-extra-items">
+                    <summary>Ver {lines.length - 3} artículos más</summary>
+                    <ul className="review-sale-items">
+                      {lines.slice(3).map(renderLine)}
+                    </ul>
+                  </details>
+                )}
+                <dl className="review-sale-facts">
+                  <div>
+                    <dt>Cliente</dt>
+                    <dd>{m.contact || "Público general"}</dd>
+                  </div>
+                  <div>
+                    <dt>Forma de pago</dt>
+                    <dd>
+                      {methodOptions.find((option) => option.value === m.method)
+                        ?.label || m.method}
+                    </dd>
+                  </div>
+                  {m.commission_cents ? (
+                    <div className="review-commission-fact">
+                      <dt>Comisión congelada</dt>
+                      <dd>
+                        {m.employee_name}
+                        <strong className="number">
+                          {money(m.commission_cents)}
+                        </strong>
+                      </dd>
+                    </div>
+                  ) : (
+                    <div>
+                      <dt>Comisión</dt>
+                      <dd>Sin comisión</dd>
+                    </div>
+                  )}
+                </dl>
+                <div className="review-sale-footer">
+                  <div>
+                    <span>Total de la venta</span>
+                    <strong className="number">{money(m.total_cents)}</strong>
+                  </div>
+                  <button
+                    className="button secondary review-action"
+                    onClick={() => void detail(m, true)}
+                  >
+                    Revisar venta
+                    <ChevronRight size={21} aria-hidden="true" />
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+        {!data?.movements.length && (
+          <div className="empty">No hay ventas por revisar</div>
+        )}
+        {pageControls()}
+      </section>
     );
   }
 
@@ -437,7 +563,11 @@ export default function Dashboard({ today }: { today: string }) {
                     data-label="Venta"
                     className="concept-cell mobile-wide"
                   >
-                    {c.source_folio || c.concept}
+                    <strong>{c.concept}</strong>
+                    {c.contact && <small>{c.contact}</small>}
+                    {c.source_folio && !c.source_folio.startsWith("MAN-") && (
+                      <small>Ticket {c.source_folio}</small>
+                    )}
                   </td>
                   <td
                     role="cell"
@@ -571,12 +701,12 @@ export default function Dashboard({ today }: { today: string }) {
           {section === "registro" && (
             <span className="date-stamp">{shortDate(today)}</span>
           )}
-          {section !== "empleados" && !!data?.reviewCount && (
+          {section === "registro" && !!data?.reviewCount && (
             <button
               className="review-shortcut"
               onClick={() => {
                 navigate("resumen");
-                choosePanel("revision");
+                choosePanel("revision", true);
               }}
             >
               <ClipboardCheck size={19} />
@@ -739,6 +869,33 @@ export default function Dashboard({ today }: { today: string }) {
                     </div>
                   </section>
                   <section
+                    className="review-period-summary"
+                    aria-label="Ventas por revisar del periodo"
+                  >
+                    <div className="review-period-copy">
+                      <span>Ventas por revisar</span>
+                      <strong className="number">
+                        {money(summary!.pendingIncome)}
+                      </strong>
+                      <small>
+                        {summary!.pendingSalesCount}{" "}
+                        {summary!.pendingSalesCount === 1
+                          ? "venta del periodo"
+                          : "ventas del periodo"}{" "}
+                        · No incluidas en la ganancia
+                      </small>
+                    </div>
+                    {!!data.reviewCount && (
+                      <button
+                        className="button secondary review-action"
+                        onClick={() => choosePanel("revision", true)}
+                      >
+                        Revisar ventas
+                        <ChevronRight size={21} aria-hidden="true" />
+                      </button>
+                    )}
+                  </section>
+                  <section
                     className="pending-section"
                     aria-label="Saldos pendientes de todas las fechas"
                   >
@@ -752,7 +909,7 @@ export default function Dashboard({ today }: { today: string }) {
                         aria-label={
                           "Por pagar a proveedores: " + money(summary!.payable)
                         }
-                        onClick={() => choosePanel("proveedores")}
+                        onClick={() => choosePanel("proveedores", true)}
                       >
                         <div className="pending-card-content">
                           <span>Proveedores</span>
@@ -768,16 +925,16 @@ export default function Dashboard({ today }: { today: string }) {
                           "Comisiones por pagar: " +
                           money(summary!.employeePayable)
                         }
-                        onClick={() => choosePanel("comisiones")}
+                        onClick={() => choosePanel("comisiones", true)}
                       >
                         <div className="pending-card-content">
-                          <span>Comisiones a empleados</span>
+                          <span>Comisiones autorizadas</span>
                           <strong className="number">
                             {money(summary!.employeePayable)}
                           </strong>
                           {!!summary!.employeeFrozen && (
                             <small className="frozen-summary">
-                              {money(summary!.employeeFrozen)} congeladas
+                              Por revisar: {money(summary!.employeeFrozen)}
                             </small>
                           )}
                         </div>
@@ -786,6 +943,13 @@ export default function Dashboard({ today }: { today: string }) {
                     </div>
                   </section>
                   <div className="history-header">
+                    <h2
+                      className="history-title"
+                      tabIndex={-1}
+                      ref={historyRef}
+                    >
+                      Historial
+                    </h2>
                     <div className="history-tabs">
                       {panels.map((item) => (
                         <button
@@ -794,22 +958,15 @@ export default function Dashboard({ today }: { today: string }) {
                           onClick={() => choosePanel(item.id)}
                         >
                           {item.label}
-                          {item.id === "revision" && !!data.reviewCount && (
-                            <span className="review-count">
-                              {data.reviewCount}
-                            </span>
-                          )}
                         </button>
                       ))}
                     </div>
                   </div>
-                  {panel === "revision" && (
-                    <div className="review-list-heading">
-                      <span>Ventas manuales sin folio validado</span>
-                      <span>Todas las fechas</span>
-                    </div>
-                  )}
-                  {panel === "comisiones" ? commissionTable() : movementTable()}
+                  {panel === "revision"
+                    ? reviewList()
+                    : panel === "comisiones"
+                      ? commissionTable()
+                      : movementTable()}
                 </>
               )}
               {section === "empleados" && (

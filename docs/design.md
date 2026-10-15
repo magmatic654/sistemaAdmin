@@ -27,15 +27,22 @@ muestran el intervalo con flechas para navegar; sólo el personalizado despliega
 Desde/Hasta. Liquidar comisiones abre Todas las pendientes, con todas las fechas,
 y permite acotar el periodo antes de confirmar. Las pagadas quedan fuera del pago.
 
-El Resumen ordena el cálculo del periodo: total de ventas (azul), menos gastos
+El Resumen ordena el cálculo confirmado del periodo: total de ventas (azul), menos gastos
 (cobre), menos comisiones (índigo) y ganancia. El resultado tiene mayor jerarquía,
 fondo verde y cambia a rojo cuando hay pérdida. En móvil se lee como una cuenta
 vertical. Debajo, «Por pagar · Todas las fechas» reúne los saldos globales de
 proveedores y empleados con menor énfasis y acceso a sus pendientes.
+Una franja ámbar separa las ventas por revisar y su importe del periodo: no entran
+en la cuenta ni en las comisiones por pagar. El acceso lleva a la cola global,
+identificada con «Todas las fechas» y su propio importe.
 
 Las ventas manuales usan una etiqueta ámbar «Requiere revisión» y una referencia
 interna identificada como tal. «Revisión» es una pestaña secundaria con contador
 global; Registro ofrece el mismo acceso sin añadir otra sección principal.
+Las fichas de revisión priorizan artículos, cantidades y precios, cliente, fecha,
+pago y comisión. El detalle muestra las partidas y los importes desde el inicio,
+antes de elegir aprobar o buscar un ticket. Códigos y referencias quedan plegados
+en «Datos del registro» para no interrumpir la tarea diaria.
 El detalle permite aprobar la captura o buscar un ticket, revisar sus partidas y
 confirmar la actualización. Una búsqueda sin resultado mantiene el estado.
 Las comisiones se muestran como congeladas mientras la venta sigue pendiente;
