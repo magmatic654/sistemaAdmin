@@ -100,6 +100,7 @@ export type CommissionRow = {
   voided_at: string | null;
 };
 export type AdminState = {
+  commissionRateBps: number | null;
   summary: Summary;
   movements: Movement[];
   employees: Employee[];
@@ -110,4 +111,11 @@ export type AdminState = {
   page: number;
   pageSize: number;
   range: { from: string; to: string };
+};
+export type PayoutPreview = {
+  employeeId: string;
+  from: string;
+  to: string;
+  totalCents: number;
+  commissions: CommissionRow[];
 };

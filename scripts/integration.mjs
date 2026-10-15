@@ -44,14 +44,14 @@ try {
   );
   assert.equal(identity.rows[0].environment, "development");
   assert.equal(identity.rows[0].instance_id, process.env.SHARED_DATABASE_ID);
-  for (const name of ["001-administration.sql", "002-manual-registration.sql"])
+  for (const name of ["001-administration.sql", "002-manual-registration.sql", "003-commission-settlements.sql"])
     await connection.query(
       await fs.readFile(
         new URL("../database/" + name, import.meta.url),
         "utf8",
       ),
     );
-  const { mutate, getState, lookupSales, movementDetail } = await import(
+  const { mutate, getState, lookupSales, movementDetail, payoutPreview } = await import(
     "../lib/data.ts"
   );
   const { businessToday } = await import("../lib/domain.ts");
@@ -184,7 +184,7 @@ try {
         movementId: income.id,
         commission: input.commission,
       }),
-      (e) => e.code === "23505",
+      /al registrar la venta/,
     );
     expense = await run("movement.create", {
       ...input,
@@ -201,7 +201,7 @@ try {
         movementId: expense.id,
         commission: input.commission,
       }),
-      /ligada a una entrada/,
+      /al registrar la venta/,
     );
     await assert.rejects(
       run("payment.create", {
@@ -419,6 +419,54 @@ try {
     assert.equal(state.movements.length, 2);
     await run("movement.void", { id: first.id, reason: "Fin QA" });
     await run("movement.void", { id: second.id, reason: "Fin QA" });
+  });
+  await test("commission preference persists only with a successful sale and snapshots the chosen rate", async () => {
+    await run("preferences.save", {rate:"7.5"});
+    assert.equal((await getState(params)).commissionRateBps,750);
+    await assert.rejects(run("preferences.save",{rate:"101"}),/100%/);
+    await assert.rejects(run("movement.create",{...input,ticketCode:"LLA1:V:"+await ticket(),commission:{employeeId:randomUUID(),mode:"percent",value:"12",rememberRate:true}}),/empleado activo/);
+    assert.equal((await getState(params)).commissionRateBps,750);
+    const saved = await run("movement.create",{...input,ticketCode:"LLA1:V:"+await ticket(),commission:{...input.commission,value:"12",rememberRate:true}});
+    assert.equal((await getState(params)).commissionRateBps,1200);
+    const snapshot = (await connection.query("SELECT mode,rate_bps FROM administracion.commissions WHERE movement_id=$1",[saved.id])).rows[0];
+    assert.deepEqual(snapshot,{mode:"percent",rate_bps:1200});
+  });
+  const payEmployee = await run("employee.save",{name:"Empleado liquidación QA",position:"Técnico",phone:""});
+  async function payable(date=day) {
+    return run("movement.create",{...input,ticketCode:"LLA1:V:"+await ticket(),date,commission:{...input.commission,employeeId:payEmployee.id}});
+  }
+  await test("employee and period preview includes only pending commissions in that range", async () => {
+    await payable();await payable();await payable("2001-01-01");
+    const preview = await payoutPreview(payEmployee.id,"day",day);
+    assert.equal(preview.commissions.length,2);
+    assert.equal(preview.totalCents,2320);
+    assert.equal((await payoutPreview(payEmployee.id,"week","2001-01-03")).commissions.length,1);
+    assert.equal((await payoutPreview(payEmployee.id,"month","2001-01-31")).totalCents,1160);
+    assert.equal((await payoutPreview(employee.id,"month","2001-01-31")).commissions.length,0);
+    const payload={employeeId:payEmployee.id,period:"day",anchor:day,paidOn:day,commissionIds:preview.commissions.map(c=>c.id),expectedTotalCents:preview.totalCents};
+    await assert.rejects(run("commission.batchPay",{...payload,employeeId:employee.id}),/cambió/);
+    await assert.rejects(run("commission.batchPay",{...payload,expectedTotalCents:1}),/importe cambió/);
+    await assert.rejects(run("commission.batchPay",{...payload,paidOn:"2000-01-01"}),/anterior/);
+    const request=randomUUID();
+    const race=await Promise.allSettled([run("commission.batchPay",payload,request),run("commission.batchPay",payload)]);
+    assert.equal(race.filter(r=>r.status==="fulfilled").length,1);
+    const first=race[0].status==="fulfilled" ? race[0].value : null;
+    if(first) assert.deepEqual(await run("commission.batchPay",payload,request),first);
+    assert.equal((await payoutPreview(payEmployee.id,"day",day)).commissions.length,0);
+    await assert.rejects(run("commission.batchPay",payload),/ya fue pagada/);
+    const payouts=await connection.query("SELECT * FROM administracion.commission_payouts WHERE employee_id=$1",[payEmployee.id]);
+    assert.equal(payouts.rows.length,1);assert.equal(Number(payouts.rows[0].amount_cents),2320);
+    await assert.rejects(connection.query("UPDATE administracion.commissions SET paid_on=NULL WHERE id=$1",[payload.commissionIds[0]]),e=>e.code==="23514");
+  });
+  await test("overlapping settlements are atomic and an inactive employee can collect existing commissions", async () => {
+    await payable();await payable();await payable();
+    await run("employee.active",{id:payEmployee.id,active:false});
+    const preview=await payoutPreview(payEmployee.id,"day",day), ids=preview.commissions.map(c=>c.id);
+    const payload={employeeId:payEmployee.id,period:"day",anchor:day,paidOn:day,expectedTotalCents:2320};
+    const result=await Promise.allSettled([run("commission.batchPay",{...payload,commissionIds:ids.slice(0,2)}),run("commission.batchPay",{...payload,commissionIds:ids.slice(1,3)})]);
+    assert.equal(result.filter(r=>r.status==="fulfilled").length,1);
+    assert.equal((await payoutPreview(payEmployee.id,"day",day)).commissions.length,1);
+    await run("employee.active",{id:payEmployee.id,active:true});
   });
   if (process.argv.includes("--keep")) {
     await fs.mkdir(new URL("../.local/", import.meta.url), { recursive: true });

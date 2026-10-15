@@ -1,5 +1,5 @@
 import { sameOrigin } from "@/lib/request";
-import { getState, lookupSales, movementDetail, mutate } from "@/lib/data";
+import { getState, lookupSales, movementDetail, mutate, payoutPreview } from "@/lib/data";
 import { ValidationError } from "@/lib/domain";
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store" };
@@ -29,6 +29,7 @@ function failure(error: unknown) {
 export async function GET(request: Request) {
   try {
     const params = new URL(request.url).searchParams;
+    if (params.has("payout")) return Response.json(await payoutPreview(params.get("employeeId") || "",params.get("period") || "",params.get("anchor") || ""),{headers});
     if (params.has("ticket"))
       return Response.json(
         { sales: await lookupSales(params.get("ticket")!) },

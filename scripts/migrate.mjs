@@ -21,6 +21,7 @@ try {
       for (const name of [
         "001-administration.sql",
         "002-manual-registration.sql",
+        "003-commission-settlements.sql",
       ])
         await client.query(
           await fs.readFile(

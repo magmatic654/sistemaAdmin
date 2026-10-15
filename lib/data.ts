@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
 import { query, transaction } from "./db.ts";
+import { scanValue } from "./scanner.ts";
 import {
   ValidationError,
   text,
@@ -11,6 +12,7 @@ import {
   manualLines,
   commissionAmount,
   parseTicketReference,
+  periodRange,
   type RecordInput,
   type Line,
 } from "./domain.ts";
@@ -22,6 +24,7 @@ import type {
   CommissionRow,
   Employee,
   Supplier,
+  PayoutPreview,
 } from "./types.ts";
 
 const SALE_UNION = `SELECT 'ventas' AS kind,id,folio,origen_app AS origin,"fechaVenta" AS sold_at,
@@ -90,7 +93,7 @@ export async function lookupSales(
   code: string,
   client?: PoolClient,
 ): Promise<Sale[]> {
-  const needle = text(code, "Código o folio", 100);
+  const needle = scanValue(text(code, "Código o folio", 110));
   const ref = parseTicketReference(needle);
   const values = ref ? [ref.kind, ref.id] : [needle];
   const sql = `SELECT s.*, (s.sold_at AT TIME ZONE 'America/Mexico_City')::date::text AS business_date,m.id AS registered_id
@@ -148,6 +151,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     employees,
     suppliers,
     commissions,
+    preferences,
   ] = await Promise.all([
     query(
       `SELECT
@@ -194,6 +198,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
       WHERE ${view === "comisiones-pendientes" ? "c.paid_on IS NULL AND l.voided_at IS NULL AND $1::date<=$2::date" : "l.date BETWEEN $1::date AND $2::date"} ORDER BY l.date DESC,c.created_at DESC`,
       [from, to],
     ),
+    query("SELECT commission_rate_bps FROM administracion.preferences WHERE singleton"),
   ]);
   const t = totals.rows[0],
     c = cash.rows[0],
@@ -215,6 +220,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
   summary.profit = summary.income - summary.expenses - summary.commissions;
   summary.cash = summary.collected - summary.paid - summary.commissionPaid;
   return {
+    commissionRateBps: preferences.rows[0]?.commission_rate_bps ?? null,
     summary,
     movements: movements.rows.map(movementRow),
     total: Number(count.rows[0].count),
@@ -293,9 +299,14 @@ async function addCommission(
     throw new ValidationError("Selecciona un empleado activo.");
   const amount = commissionAmount(total, commission.mode, commission.value);
   await client.query(
-    "INSERT INTO administracion.commissions(id,movement_id,employee_id,amount_cents) VALUES($1,$2,$3,$4)",
-    [randomUUID(), movementId, employeeId, amount],
+    "INSERT INTO administracion.commissions(id,movement_id,employee_id,amount_cents,mode,rate_bps) VALUES($1,$2,$3,$4,$5,$6)",
+    [randomUUID(), movementId, employeeId, amount, commission.mode,
+      commission.mode === "percent" ? cents(commission.value, "Porcentaje") : null],
   );
+  if (commission.rememberRate === true) {
+    if (commission.mode !== "percent") throw new ValidationError("La sugerencia debe ser un porcentaje.");
+    await client.query("UPDATE administracion.preferences SET commission_rate_bps=$1 WHERE singleton", [cents(commission.value, "Porcentaje")]);
+  }
 }
 
 async function addPayment(
@@ -466,7 +477,7 @@ async function createMovement(client: PoolClient, input: RecordInput) {
       tax,
       total,
       paymentMethod,
-      text(input.reference, "Referencia", 160, false),
+      source && input.useTicketData === true ? source.folio : text(input.reference, "Referencia", 160, false),
       text(input.notes, "Notas", 2000, false),
       source?.kind || null,
       source?.id || null,
@@ -490,6 +501,53 @@ async function createMovement(client: PoolClient, input: RecordInput) {
   return { id };
 }
 
+export async function payoutPreview(employeeId: string, period: string, anchor: string): Promise<PayoutPreview> {
+  uuid(employeeId);
+  const {from, to} = periodRange(period, anchor);
+  const employee = await query("SELECT id FROM administracion.employees WHERE id=$1", [employeeId]);
+  if (!employee.rows.length) throw new ValidationError("Selecciona un empleado.");
+  const result = await query(`SELECT c.id,c.movement_id,l.date::text,l.concept,l.contact,l.source_folio,
+    c.employee_id,l.employee_name,c.amount_cents,c.paid_on::text,l.source_cancelled,l.voided_at
+    FROM administracion.commissions c JOIN administracion.manual_ledger l ON l.id=c.movement_id
+    WHERE c.employee_id=$1 AND c.paid_on IS NULL AND l.voided_at IS NULL
+    AND l.date BETWEEN $2::date AND $3::date ORDER BY l.date,c.id`, [employeeId,from,to]);
+  const commissions = result.rows.map(row => ({...row,amount_cents:Number(row.amount_cents)})) as CommissionRow[];
+  return {employeeId,from,to,commissions,totalCents:commissions.reduce((sum,c)=>sum+c.amount_cents,0)};
+}
+
+async function payCommissions(client: PoolClient, input: RecordInput) {
+  const employeeId = uuid(input.employeeId), paidOn = date(input.paidOn);
+  const period = text(input.period,"Periodo",10), anchor = date(input.anchor);
+  const {from,to} = periodRange(period,anchor);
+  if (!Array.isArray(input.commissionIds) || !input.commissionIds.length || input.commissionIds.length>5000)
+    throw new ValidationError("Selecciona comisiones pendientes para pagar.");
+  const ids = input.commissionIds.map(uuid);
+  if (new Set(ids).size!==ids.length) throw new ValidationError("Hay comisiones repetidas.");
+  // Lock movements first, in stable order, matching the payment/void lock order.
+  // Only commissions explicitly reviewed by the administrator may be settled.
+  const initial = await client.query("SELECT movement_id FROM administracion.commissions WHERE id=ANY($1::uuid[]) ORDER BY movement_id",[ids]);
+  if (initial.rows.length!==ids.length) throw new ValidationError("Las comisiones cambiaron. Vuelve a revisar el pago.");
+  for (const row of initial.rows) await lockMovement(client,row.movement_id);
+  const result = await client.query(`SELECT c.*,m.date::text FROM administracion.commissions c
+    JOIN administracion.movements m ON m.id=c.movement_id WHERE c.id=ANY($1::uuid[])
+    ORDER BY c.movement_id FOR UPDATE OF c`,[ids]);
+  for (const row of result.rows) {
+    if (row.employee_id!==employeeId || row.paid_on || row.date<from || row.date>to)
+      throw new ValidationError("Alguna comisión ya fue pagada o cambió. Vuelve a revisar el pago.");
+    if (paidOn<row.date) throw new ValidationError("El pago no puede ser anterior a las ventas.");
+  }
+  const total = result.rows.reduce((sum,row)=>sum+Number(row.amount_cents),0);
+  if (!Number.isSafeInteger(total) || total!==input.expectedTotalCents)
+    throw new ValidationError("El importe cambió. Vuelve a revisar el pago.");
+  const id = randomUUID();
+  await client.query(`INSERT INTO administracion.commission_payouts
+    (id,employee_id,period,date_from,date_to,paid_on,amount_cents,commission_count)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,[id,employeeId,period,from,to,paidOn,total,ids.length]);
+  const updated = await client.query("UPDATE administracion.commissions SET paid_on=$2,payout_id=$3 WHERE id=ANY($1::uuid[]) AND paid_on IS NULL RETURNING id",[ids,paidOn,id]);
+  if (updated.rowCount!==ids.length) throw new ValidationError("El pago ya fue registrado. Actualiza la pantalla.");
+  return {id,totalCents:total,count:ids.length};
+}
+
 async function executeAction(
   client: PoolClient,
   action: string,
@@ -499,16 +557,14 @@ async function executeAction(
   if (action === "payment.create")
     return addPayment(client, uuid(input.movementId), input);
   if (action === "commission.create") {
-    const movement = await lockMovement(client, input.movementId);
-    if (movement.kind !== "entrada")
-      throw new ValidationError("La comisión debe estar ligada a una entrada.");
-    await addCommission(
-      client,
-      movement.id,
-      Number(movement.total_cents),
-      input.commission,
-    );
-    return { id: movement.id };
+    throw new ValidationError("La comisión se asigna al registrar la venta.");
+  }
+  if (action === "commission.batchPay") return payCommissions(client, input);
+  if (action === "preferences.save") {
+    const rate = input.rate === null ? null : cents(input.rate, "Porcentaje");
+    if (rate !== null && rate > 10000) throw new ValidationError("El porcentaje no puede superar 100%.");
+    await client.query("UPDATE administracion.preferences SET commission_rate_bps=$1 WHERE singleton", [rate]);
+    return { id: "00000000-0000-0000-0000-000000000001" };
   }
   if (action === "commission.pay") {
     const id = uuid(input.id);
