@@ -1,19 +1,40 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import pg from "pg";
 
-const source = new URL(process.env.DATABASE_URL || "postgresql://invalid");
-assert.equal(source.hostname, "127.0.0.1");
-assert.equal(source.port, "55439");
+const administration = new URL(
+  process.env.DATABASE_URL || "postgresql://invalid",
+);
+const source = new URL(
+  process.env.SHARED_DATABASE_URL || "postgresql://invalid",
+);
+for (const url of [administration, source]) {
+  assert.equal(url.hostname, "127.0.0.1");
+  assert.equal(url.port, "55439");
+}
+assert.equal(administration.pathname, "/llantas_administracion_dev");
 assert.equal(source.pathname, "/llantas_unified_dev");
+assert.equal(process.env.ADMIN_DATABASE_ENVIRONMENT, "development");
 assert.equal(process.env.SHARED_DATABASE_ENVIRONMENT, "development");
 const database = "llantas_admin_tests";
-const maintenanceUrl = new URL(source);
-maintenanceUrl.pathname = "/postgres";
+const sourceDatabase = "llantas_admin_source_tests";
+process.loadEnvFile(
+  fileURLToPath(new URL("../.local/maintenance.env", import.meta.url)),
+);
+const maintenanceUrl = new URL(
+  process.env.QA_MAINTENANCE_URL || "postgresql://invalid",
+);
+assert.equal(maintenanceUrl.hostname, "127.0.0.1");
+assert.equal(maintenanceUrl.port, "55439");
+assert.equal(maintenanceUrl.pathname, "/postgres");
 const owner = new pg.Client({ connectionString: maintenanceUrl.toString() });
 let created = false,
-  connection;
+  sourceCreated = false,
+  connection,
+  migrator,
+  sourceWriter;
 async function test(name, operation) {
   await operation();
   console.log("PASS " + name);
@@ -21,8 +42,8 @@ async function test(name, operation) {
 try {
   await owner.connect();
   const existing = await owner.query(
-    "SELECT 1 FROM pg_database WHERE datname=$1",
-    [database],
+    "SELECT 1 FROM pg_database WHERE datname=ANY($1::text[])",
+    [[database, sourceDatabase]],
   );
   assert.equal(
     existing.rows.length,
@@ -31,42 +52,127 @@ try {
   );
   // No test writes go to the development base. The entire disposable clone is owned by this run.
   await owner.query(
-    "CREATE DATABASE llantas_admin_tests TEMPLATE llantas_unified_dev",
+    "CREATE DATABASE llantas_admin_tests TEMPLATE llantas_administracion_dev",
   );
   created = true;
-  const target = new URL(source);
+  await owner.query(
+    "CREATE DATABASE llantas_admin_source_tests TEMPLATE llantas_unified_dev",
+  );
+  sourceCreated = true;
+  const target = new URL(administration);
   target.pathname = "/" + database;
+  const sourceTarget = new URL(source);
+  sourceTarget.pathname = "/" + sourceDatabase;
+  const sourceOwnerTarget = new URL(maintenanceUrl);
+  sourceOwnerTarget.pathname = "/" + sourceDatabase;
   process.env.DATABASE_URL = target.toString();
+  process.env.SHARED_DATABASE_URL = sourceTarget.toString();
   connection = new pg.Client({ connectionString: target.toString() });
   await connection.connect();
-  const identity = await connection.query(
+  const migrationTarget = new URL(maintenanceUrl);
+  migrationTarget.pathname = "/" + database;
+  migrator = new pg.Client({ connectionString: migrationTarget.toString() });
+  await migrator.connect();
+  sourceWriter = new pg.Client({
+    connectionString: sourceOwnerTarget.toString(),
+  });
+  await sourceWriter.connect();
+  const sourceIdentity = await sourceWriter.query(
     "SELECT environment,instance_id FROM shared_runtime.configuration",
   );
-  assert.equal(identity.rows[0].environment, "development");
-  assert.equal(identity.rows[0].instance_id, process.env.SHARED_DATABASE_ID);
+  assert.equal(sourceIdentity.rows[0].environment, "development");
+  assert.equal(
+    sourceIdentity.rows[0].instance_id,
+    process.env.SHARED_DATABASE_ID,
+  );
   for (const name of [
     "001-administration.sql",
     "002-manual-registration.sql",
     "003-commission-settlements.sql",
     "004-offline-manual-sales.sql",
+    "005-periods.sql",
+    "006-administration-identity.sql",
   ])
-    await connection.query(
+    await migrator.query(
       await fs.readFile(
         new URL("../database/" + name, import.meta.url),
         "utf8",
       ),
     );
+  // Recreating the ledger view during migration resets that view's cloned ACL.
+  const writerRole = decodeURIComponent(administration.username);
+  assert.match(writerRole, /^[a-z_][a-z0-9_]*$/i);
+  await migrator.query(
+    `GRANT SELECT ON administracion.manual_ledger TO "${writerRole}"`,
+  );
+  const identity = await connection.query(
+    "SELECT environment,instance_id FROM administracion.configuration",
+  );
+  assert.equal(identity.rows[0].environment, "development");
+  assert.equal(identity.rows[0].instance_id, process.env.ADMIN_DATABASE_ID);
   const { mutate, getState, lookupSales, movementDetail, payoutPreview } =
     await import("../lib/data.ts");
+  const { getSourceClient } = await import("../lib/db.ts");
   const { businessToday } = await import("../lib/domain.ts");
   const day = businessToday(),
     params = new URLSearchParams({ from: day, to: day });
   const run = (action, payload, id = randomUUID()) =>
     mutate(action, payload, id);
   const service = (
-    await connection.query("SELECT id,nombre FROM servicios LIMIT 1")
+    await sourceWriter.query("SELECT id,nombre FROM public.servicios LIMIT 1")
   ).rows[0];
   assert.ok(service);
+  await test("the shared connection is read-only and the administration database is separate", async () => {
+    assert.equal(
+      (
+        await connection.query(
+          "SELECT to_regclass('public.ventas') AS table_name",
+        )
+      ).rows[0].table_name,
+      null,
+    );
+    await sourceWriter.query(
+      "CREATE TABLE public.admin_readonly_probe(id integer)",
+    );
+    const reader = await getSourceClient();
+    try {
+      assert.equal(
+        (await reader.query("SHOW transaction_read_only")).rows[0]
+          .transaction_read_only,
+        "on",
+      );
+      const permissions = (
+        await reader.query(
+          `SELECT has_table_privilege(current_user,'public.ventas','INSERT') AS can_insert,
+          has_table_privilege(current_user,'public.ventas','UPDATE') AS can_update,
+          has_table_privilege(current_user,'public.ventas','DELETE') AS can_delete,
+          has_schema_privilege(current_user,'public','CREATE') AS can_create,
+          rolsuper,rolcreatedb,rolcreaterole FROM pg_roles WHERE rolname=current_user`,
+        )
+      ).rows[0];
+      for (const allowed of Object.values(permissions))
+        assert.equal(allowed, false);
+      for (const statement of [
+        "INSERT INTO public.ventas SELECT * FROM public.ventas WHERE false",
+        "UPDATE public.ventas SET folio=folio WHERE false",
+        "DROP TABLE public.admin_readonly_probe",
+      ])
+        await assert.rejects(reader.query(statement), (error) =>
+          ["25006", "42501"].includes(error.code),
+        );
+      assert.equal(
+        (
+          await sourceWriter.query(
+            "SELECT count(*) FROM public.admin_readonly_probe",
+          )
+        ).rows[0].count,
+        "0",
+      );
+    } finally {
+      reader.release();
+      await sourceWriter.query("DROP TABLE public.admin_readonly_probe");
+    }
+  });
   async function ticket(origin = "negra", overrides = {}) {
     const id = overrides.id || "admin-qa-" + randomUUID();
     const item = {
@@ -79,7 +185,7 @@ try {
       costoUnitario: null,
       costoSubtotal: null,
     };
-    await connection.query(
+    await sourceWriter.query(
       `INSERT INTO public.ventas(id,folio,cliente,items,subtotal,iva,total,"metodoPago","fechaVenta",origen_app,garantia)
       VALUES($1,$2,$3::jsonb,$4::jsonb,200,32,232,'efectivo',now(),$5,$6::jsonb)`,
       [
@@ -133,7 +239,7 @@ try {
     received: "16.00",
     notes: "",
     reference: "",
-    commission: { employeeId: employee.id, mode: "percent", value: "10" },
+    commission: { employeeId: employee.id, mode: "fixed", value: "11.60" },
   };
   let income, expense;
   await test("durable concurrent retries create one entry, payment and commission", async () => {
@@ -301,13 +407,13 @@ try {
     );
   });
   await test("source changes never rewrite manual reports and cancelled tickets cannot receive new collections", async () => {
-    await connection.query(
+    await sourceWriter.query(
       "UPDATE public.ventas SET cancelada=true WHERE id=$1",
       [fixtureId],
     );
     let state = await getState(params);
     assert.equal(state.summary.income, 34800);
-    assert.equal(state.summary.commissions, 3480);
+    assert.equal(state.summary.commissions, 2320);
     assert.equal(state.summary.cancelled, 0);
     await assert.rejects(
       run("payment.create", {
@@ -352,11 +458,21 @@ try {
       ) > 10,
     );
   });
-  await test("identity mismatch is rejected before business SQL", async () => {
-    const original = process.env.SHARED_DATABASE_ID;
-    process.env.SHARED_DATABASE_ID = randomUUID();
-    await assert.rejects(getState(params), /instancia/);
-    process.env.SHARED_DATABASE_ID = original;
+  await test("each database identity is checked before its business SQL", async () => {
+    const ownOriginal = process.env.ADMIN_DATABASE_ID;
+    try {
+      process.env.ADMIN_DATABASE_ID = randomUUID();
+      await assert.rejects(getState(params), /instancia/);
+    } finally {
+      process.env.ADMIN_DATABASE_ID = ownOriginal;
+    }
+    const sourceOriginal = process.env.SHARED_DATABASE_ID;
+    try {
+      process.env.SHARED_DATABASE_ID = randomUUID();
+      await assert.rejects(lookupSales("LLA1:V:" + fixtureId), /instancia/);
+    } finally {
+      process.env.SHARED_DATABASE_ID = sourceOriginal;
+    }
   });
   await test("different administrator requests racing on the same sale ID cannot duplicate it", async () => {
     const id = await ticket();
@@ -424,37 +540,42 @@ try {
     await run("movement.void", { id: first.id, reason: "Fin QA" });
     await run("movement.void", { id: second.id, reason: "Fin QA" });
   });
-  await test("commission preference persists only with a successful sale and snapshots the chosen rate", async () => {
-    await run("preferences.save", { rate: "7.5" });
-    assert.equal((await getState(params)).commissionRateBps, 750);
-    await assert.rejects(run("preferences.save", { rate: "101" }), /100%/);
-    await assert.rejects(
-      run("movement.create", {
-        ...input,
-        ticketCode: "LLA1:V:" + (await ticket()),
-        commission: {
-          employeeId: randomUUID(),
-          mode: "percent",
-          value: "12",
-          rememberRate: true,
-        },
-      }),
-      /empleado activo/,
+  await test("commissions require a manual amount, allow exactly the sale total and reject preferences atomically", async () => {
+    await assert.rejects(run("preferences.save", { rate: "7.5" }));
+    const before = (
+      await connection.query("SELECT count(*) FROM administracion.movements")
+    ).rows[0].count;
+    for (const commission of [
+      { ...input.commission, mode: "percent", value: "10" },
+      { ...input.commission, rememberRate: true },
+      { ...input.commission, value: "116.01" },
+    ])
+      await assert.rejects(
+        run("movement.create", {
+          ...input,
+          ticketCode: "LLA1:V:" + (await ticket()),
+          commission,
+        }),
+      );
+    assert.equal(
+      (await connection.query("SELECT count(*) FROM administracion.movements"))
+        .rows[0].count,
+      before,
     );
-    assert.equal((await getState(params)).commissionRateBps, 750);
     const saved = await run("movement.create", {
       ...input,
       ticketCode: "LLA1:V:" + (await ticket()),
-      commission: { ...input.commission, value: "12", rememberRate: true },
+      commission: { ...input.commission, value: "116.00" },
     });
-    assert.equal((await getState(params)).commissionRateBps, 1200);
     const snapshot = (
       await connection.query(
-        "SELECT mode,rate_bps FROM administracion.commissions WHERE movement_id=$1",
+        "SELECT mode,rate_bps,amount_cents FROM administracion.commissions WHERE movement_id=$1",
         [saved.id],
       )
     ).rows[0];
-    assert.deepEqual(snapshot, { mode: "percent", rate_bps: 1200 });
+    assert.equal(snapshot.mode, "fixed");
+    assert.equal(snapshot.rate_bps, null);
+    assert.equal(Number(snapshot.amount_cents), 11600);
   });
   const payEmployee = await run("employee.save", {
     name: "Empleado liquidación QA",
@@ -473,6 +594,11 @@ try {
     await payable();
     await payable();
     await payable("2001-01-01");
+    const voided = await payable("2001-01-02");
+    await run("movement.void", {
+      id: voided.id,
+      reason: "Excluir comisión anulada QA",
+    });
     const preview = await payoutPreview(payEmployee.id, "day", day);
     assert.equal(preview.commissions.length, 2);
     assert.equal(preview.totalCents, 2320);
@@ -490,6 +616,11 @@ try {
         .length,
       0,
     );
+    const all = await payoutPreview(payEmployee.id, "all", day);
+    assert.equal(all.commissions.length, 3);
+    assert.equal(all.totalCents, 3480);
+    assert.equal(all.from, "2000-01-01");
+    assert.equal(all.to, "2100-12-31");
     const payload = {
       employeeId: payEmployee.id,
       period: "day",
@@ -526,6 +657,10 @@ try {
       (await payoutPreview(payEmployee.id, "day", day)).commissions.length,
       0,
     );
+    assert.equal(
+      (await payoutPreview(payEmployee.id, "all", day)).commissions.length,
+      1,
+    );
     await assert.rejects(run("commission.batchPay", payload), /ya fue pagada/);
     const payouts = await connection.query(
       "SELECT * FROM administracion.commission_payouts WHERE employee_id=$1",
@@ -539,6 +674,85 @@ try {
         [payload.commissionIds[0]],
       ),
       (e) => e.code === "23514",
+    );
+  });
+  await test("custom settlements honor their range and all-history settlement clears older pending commissions once", async () => {
+    await payable("2001-02-01");
+    await payable("2001-02-28");
+    const outside = await payable("2001-03-01");
+    const custom = await payoutPreview(
+      payEmployee.id,
+      "custom",
+      day,
+      "2001-02-01",
+      "2001-02-28",
+    );
+    assert.equal(custom.commissions.length, 2);
+    assert.equal(custom.totalCents, 2320);
+    const payload = {
+      employeeId: payEmployee.id,
+      period: "custom",
+      anchor: day,
+      from: "2001-02-01",
+      to: "2001-02-28",
+      commissionIds: custom.commissions.map((commission) => commission.id),
+      expectedTotalCents: custom.totalCents,
+    };
+    const outsideCommission = (await movementDetail(outside.id)).movement
+      .commission_id;
+    await assert.rejects(
+      run("commission.batchPay", {
+        ...payload,
+        commissionIds: [outsideCommission],
+        expectedTotalCents: 1160,
+      }),
+      /cambió/,
+    );
+    await assert.rejects(
+      payoutPreview(payEmployee.id, "custom", day, "2001-03-01", "2001-02-28"),
+    );
+    const request = randomUUID();
+    const saved = await run("commission.batchPay", payload, request);
+    assert.deepEqual(await run("commission.batchPay", payload, request), saved);
+    assert.equal(
+      (
+        await payoutPreview(
+          payEmployee.id,
+          "custom",
+          day,
+          payload.from,
+          payload.to,
+        )
+      ).commissions.length,
+      0,
+    );
+    const all = await payoutPreview(payEmployee.id, "all", day);
+    assert.equal(all.commissions.length, 2);
+    assert.equal(all.totalCents, 2320);
+    const allPayload = {
+      employeeId: payEmployee.id,
+      period: "all",
+      anchor: day,
+      commissionIds: all.commissions.map((commission) => commission.id),
+      expectedTotalCents: all.totalCents,
+    };
+    await run("commission.batchPay", allPayload);
+    assert.equal(
+      (await payoutPreview(payEmployee.id, "all", day)).commissions.length,
+      0,
+    );
+    await assert.rejects(
+      run("commission.batchPay", allPayload),
+      /ya fue pagada/,
+    );
+    assert.equal(
+      (
+        await connection.query(
+          "SELECT count(*) FROM administracion.commissions c JOIN administracion.movements m ON m.id=c.movement_id WHERE c.employee_id=$1 AND c.paid_on IS NULL AND m.voided_at IS NOT NULL",
+          [payEmployee.id],
+        )
+      ).rows[0].count,
+      "1",
     );
   });
   await test("overlapping settlements are atomic and an inactive employee can collect existing commissions", async () => {
@@ -589,7 +803,7 @@ try {
     assert.equal(detail.movement.commission_cents, 1160);
     assert.equal(
       (
-        await connection.query("SELECT id FROM public.ventas WHERE id=$1", [
+        await sourceWriter.query("SELECT id FROM public.ventas WHERE id=$1", [
           offlineId,
         ])
       ).rows.length,
@@ -734,7 +948,7 @@ try {
         vatIncluded: true,
       };
     const sourceCount = (
-      await connection.query("SELECT count(*) FROM public.ventas")
+      await sourceWriter.query("SELECT count(*) FROM public.ventas")
     ).rows[0].count;
     const results = await Promise.all([
       run("sale.manual.create", payload, request),
@@ -751,7 +965,7 @@ try {
     assert.equal(movement.commission_cents, 2510);
     assert.equal(payments.length, 1);
     assert.equal(
-      (await connection.query("SELECT count(*) FROM public.ventas")).rows[0]
+      (await sourceWriter.query("SELECT count(*) FROM public.ventas")).rows[0]
         .count,
       sourceCount,
     );
@@ -795,27 +1009,229 @@ try {
       "Separate confirmed sales may legitimately have the same contents.",
     );
   });
+  async function bulkPayables(employeeId, count) {
+    // Bulk fixtures are allowed only in this run's disposable Administration clone.
+    assert.equal(
+      (await connection.query("SELECT current_database() AS name")).rows[0]
+        .name,
+      "llantas_admin_tests",
+    );
+    const fixtures = Array.from({ length: count }, () => ({
+      movementId: randomUUID(),
+      commissionId: randomUUID(),
+    }));
+    await connection.query(
+      `WITH fixtures AS (
+        SELECT * FROM unnest($1::uuid[],$2::uuid[]) AS f(movement_id,commission_id)
+      ), inserted AS (
+        INSERT INTO administracion.movements
+        (id,kind,date,concept,category,contact,items,subtotal_cents,tax_cents,total_cents,method,manual_folio,manual_origin)
+        SELECT movement_id,'entrada','2001-01-01','Comisión histórica QA','Venta manual','Público QA',
+          '[{"description":"Servicio QA","quantity":1,"unitCents":1000,"totalCents":1000}]'::jsonb,
+          1000,0,1000,'efectivo','QA-BULK-'||movement_id::text,'manual' FROM fixtures
+        RETURNING id
+      )
+      INSERT INTO administracion.commissions(id,movement_id,employee_id,amount_cents,mode)
+      SELECT f.commission_id,m.id,$3::uuid,100,'fixed' FROM inserted m JOIN fixtures f ON f.movement_id=m.id`,
+      [
+        fixtures.map((fixture) => fixture.movementId),
+        fixtures.map((fixture) => fixture.commissionId),
+        employeeId,
+      ],
+    );
+    return fixtures;
+  }
+  function snapshotPayload(preview, period = "all", anchor = day) {
+    return {
+      employeeId: preview.employeeId,
+      period,
+      anchor,
+      snapshot: preview.snapshot,
+      expectedTotalCents: preview.totalCents,
+    };
+  }
+  await test("snapshot settlements pay more than 5000 historical commissions with a small request and durable replay", async () => {
+    const bulkEmployee = await run("employee.save", {
+      name: "Historial completo QA",
+      phone: "",
+      position: "Técnico",
+    });
+    await bulkPayables(bulkEmployee.id, 5201);
+    const preview = await payoutPreview(bulkEmployee.id, "all", day);
+    assert.equal(preview.commissions.length, 5201);
+    assert.equal(preview.totalCents, 520100);
+    assert.match(preview.snapshot, /^[a-f\d]{64}$/);
+    assert.equal(
+      (await payoutPreview(bulkEmployee.id, "all", day)).snapshot,
+      preview.snapshot,
+    );
+    assert.notEqual(
+      (await payoutPreview(bulkEmployee.id, "day", "2001-01-01")).snapshot,
+      preview.snapshot,
+    );
+    const payload = snapshotPayload(preview);
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(payload)) < 1000,
+      "The request contains a digest, not thousands of commission IDs.",
+    );
+    assert.ok(
+      Buffer.byteLength(
+        JSON.stringify(preview.commissions.map((row) => row.id)),
+      ) > 100_000,
+      "The fixture exceeds the previous HTTP body and legacy ID limits.",
+    );
+    const request = randomUUID();
+    const paid = await run("commission.batchPay", payload, request);
+    assert.equal(paid.count, 5201);
+    assert.equal(paid.totalCents, 520100);
+    assert.deepEqual(await run("commission.batchPay", payload, request), paid);
+    await assert.rejects(run("commission.batchPay", payload), /cambiaron/);
+    assert.equal(
+      (await payoutPreview(bulkEmployee.id, "all", day)).commissions.length,
+      0,
+    );
+    const settlement = (
+      await connection.query(
+        "SELECT commission_count,amount_cents FROM administracion.commission_payouts WHERE id=$1",
+        [paid.id],
+      )
+    ).rows[0];
+    assert.equal(settlement.commission_count, 5201);
+    assert.equal(Number(settlement.amount_cents), 520100);
+  });
+  await test("reviewed snapshots reject new, changed, voided and already paid commissions", async () => {
+    const snapshotEmployee = await run("employee.save", {
+      name: "Revisión de liquidación QA",
+      phone: "",
+      position: "Técnico",
+    });
+    const [first] = await bulkPayables(snapshotEmployee.id, 1);
+    let preview = await payoutPreview(snapshotEmployee.id, "all", day);
+    await assert.rejects(
+      run("commission.batchPay", {
+        ...snapshotPayload(preview),
+        snapshot: "invalid",
+      }),
+      /revisar/,
+    );
+    await assert.rejects(
+      run("commission.batchPay", {
+        ...snapshotPayload(preview),
+        period: "day",
+        anchor: "2001-01-01",
+      }),
+      /cambiaron/,
+    );
+    const [second] = await bulkPayables(snapshotEmployee.id, 1);
+    await assert.rejects(
+      run("commission.batchPay", snapshotPayload(preview)),
+      /cambiaron/,
+    );
+    preview = await payoutPreview(snapshotEmployee.id, "all", day);
+    await connection.query(
+      "UPDATE administracion.commissions SET amount_cents=200 WHERE id=$1",
+      [first.commissionId],
+    );
+    await assert.rejects(
+      run("commission.batchPay", snapshotPayload(preview)),
+      /cambiaron/,
+    );
+    preview = await payoutPreview(snapshotEmployee.id, "all", day);
+    await run("movement.void", {
+      id: first.movementId,
+      reason: "Cambio posterior a revisión QA",
+    });
+    await assert.rejects(
+      run("commission.batchPay", snapshotPayload(preview)),
+      /cambiaron/,
+    );
+    preview = await payoutPreview(snapshotEmployee.id, "all", day);
+    await run("commission.pay", { id: second.commissionId, date: day });
+    await assert.rejects(
+      run("commission.batchPay", snapshotPayload(preview)),
+      /cambiaron/,
+    );
+    assert.equal(
+      (
+        await connection.query(
+          "SELECT count(*) FROM administracion.commission_payouts WHERE employee_id=$1",
+          [snapshotEmployee.id],
+        )
+      ).rows[0].count,
+      "0",
+    );
+  });
+  await test("concurrent snapshot settlements pay the reviewed history exactly once", async () => {
+    const snapshotEmployee = await run("employee.save", {
+      name: "Liquidación concurrente QA",
+      phone: "",
+      position: "Técnico",
+    });
+    await bulkPayables(snapshotEmployee.id, 2);
+    const preview = await payoutPreview(snapshotEmployee.id, "all", day);
+    const payload = snapshotPayload(preview);
+    const requests = [randomUUID(), randomUUID()];
+    const results = await Promise.allSettled(
+      requests.map((request) => run("commission.batchPay", payload, request)),
+    );
+    assert.equal(
+      results.filter((result) => result.status === "fulfilled").length,
+      1,
+    );
+    const winningIndex = results.findIndex(
+      (result) => result.status === "fulfilled",
+    );
+    const winning = results[winningIndex].value;
+    assert.equal(winning.count, 2);
+    assert.deepEqual(
+      await run("commission.batchPay", payload, requests[winningIndex]),
+      winning,
+    );
+    assert.equal(
+      (await payoutPreview(snapshotEmployee.id, "all", day)).commissions.length,
+      0,
+    );
+    assert.equal(
+      (
+        await connection.query(
+          "SELECT count(*) FROM administracion.commission_payouts WHERE employee_id=$1",
+          [snapshotEmployee.id],
+        )
+      ).rows[0].count,
+      "1",
+    );
+  });
   if (process.argv.includes("--keep")) {
     await fs.mkdir(new URL("../.local/", import.meta.url), { recursive: true });
     await fs.writeFile(
       new URL("../.local/test.env", import.meta.url),
       [
         "DATABASE_URL=" + JSON.stringify(target.toString()),
+        "ADMIN_DATABASE_ENVIRONMENT=development",
+        "ADMIN_DATABASE_ID=" + process.env.ADMIN_DATABASE_ID,
+        "SHARED_DATABASE_URL=" + JSON.stringify(sourceTarget.toString()),
         "SHARED_DATABASE_MODE=true",
         "SHARED_DATABASE_ENVIRONMENT=development",
         "SHARED_DATABASE_ID=" + process.env.SHARED_DATABASE_ID,
         "DB_REQUIRE_SSL=false",
+        "SHARED_DB_REQUIRE_SSL=false",
       ].join("\n"),
     );
     console.log(
-      "Disposable QA clone retained. Private launch environment: .local/test.env",
+      "Disposable administration and read-only source QA clones retained. Private launch environment: .local/test.env",
     );
     created = false;
+    sourceCreated = false;
   }
   console.log("All administration PostgreSQL integration checks passed.");
 } finally {
   await global._adminDatabase?.pool.end();
+  await global._sharedDatabase?.pool.end();
   await connection?.end();
+  await migrator?.end();
+  await sourceWriter?.end();
   if (created) await owner.query("DROP DATABASE llantas_admin_tests");
+  if (sourceCreated)
+    await owner.query("DROP DATABASE llantas_admin_source_tests");
   await owner.end();
 }

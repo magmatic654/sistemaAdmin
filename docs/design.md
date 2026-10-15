@@ -19,7 +19,21 @@ viewport. En horizontal bajo, producto/precio/cliente ocupan la izquierda y
 comisión/total la derecha. El espaciado se compacta según la altura disponible.
 El resto de formularios mantiene título y confirmación fijos al desplazar el cuerpo.
 Escanear ticket identifica y prerrellena; ambos flujos requieren confirmación.
+La comisión se captura como importe manual junto a la venta y nunca supera su
+total. No hay ajustes ni sugerencias de porcentaje.
+
+Los filtros ofrecen Día, Semana, Mes y Rango personalizado. Los tres primeros
+muestran el intervalo con flechas para navegar; sólo el personalizado despliega
+Desde/Hasta. Liquidar comisiones abre Todas las pendientes, con todas las fechas,
+y permite acotar el periodo antes de confirmar. Las pagadas quedan fuera del pago.
+
+Ventas a crédito identifica las ventas con saldo de cliente; una línea aclara su
+significado dentro de ese apartado. El detalle de cada venta muestra artículos,
+cantidad, precio unitario, importe por partida, subtotal, IVA y total en fichas
+que se adaptan al ancho de escritorio y móvil.
 
 Revisión visual de la venta manual: 1366×768, 375×667, 320×568, 390×844, 844×390 y
 568×320 con la comisión activada; también importes largos y errores de validación.
-Tablas y pestañas desplazan su propio contenedor. El resumen sólo usa registros propios.
+Tablas y pestañas desplazan su propio contenedor. El resumen sólo usa registros
+de la base propia de Administración. La base compartida queda de sólo lectura
+para identificar tickets solicitados explícitamente.

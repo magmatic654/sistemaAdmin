@@ -13,8 +13,21 @@
   en escritorio y móvil; distribuir en columnas para pantallas horizontales bajas.
 - Comprobar folio/origen e ID disponible para impedir duplicados entre captura
   manual y escaneo. La comisión se asigna junto con la venta, nunca después.
-- Liquidar comisiones por empleado y día/semana/mes, sólo las pendientes revisadas.
-- Preservar la base compartida, sus controles de identidad y los registros históricos.
+- Capturar la comisión como importe manual mayor a cero y hasta el total de la venta;
+  no implementar porcentajes sugeridos ni preferencias de comisión.
+- Consultar por día, semana, mes o rango personalizado. Sólo el rango personalizado
+  muestra fechas editables; los periodos estándar usan flechas y un intervalo legible.
+- Liquidar las pendientes revisadas por empleado y periodo, o todas las pendientes
+  de cualquier fecha. Una comisión pagada no se reabre ni se cobra otra vez.
+- Mostrar las partidas de cada venta con cantidad, precio unitario, importe,
+  subtotal, IVA y total. Conservar los importes históricos del ticket.
+- Llamar Ventas a crédito al saldo pendiente de cobro de ventas parciales o a crédito.
+- Guardar todos los registros propios en una base independiente de Administración.
+  La conexión compartida sólo tiene SELECT y se consulta al buscar o validar un ticket
+  explícitamente; nunca escribir, migrar ni eliminar datos desde esa conexión.
+- Preservar los controles de identidad de ambas bases y los registros históricos.
+- Ejecutar integración únicamente sobre los dos clones desechables de Administración
+  y origen. No crear fixtures en las bases de desarrollo.
 - No usar producción para desarrollar o probar. No guardar secretos en Git.
 <!-- BEGIN:nextjs-agent-rules -->
 

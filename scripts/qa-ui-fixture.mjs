@@ -1,11 +1,17 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { getClient } from "../lib/db.ts";
-const target = new URL(process.env.DATABASE_URL);
+import pg from "pg";
+const target = new URL(process.env.SHARED_DATABASE_URL);
 assert.equal(target.hostname, "127.0.0.1");
 assert.equal(target.port, "55439");
-assert.equal(target.pathname, "/llantas_admin_tests");
-const client = await getClient();
+assert.equal(target.pathname, "/llantas_admin_source_tests");
+process.loadEnvFile(new URL("../.local/maintenance.env", import.meta.url));
+const maintenance = new URL(process.env.QA_MAINTENANCE_URL);
+assert.equal(maintenance.hostname, target.hostname);
+assert.equal(maintenance.port, target.port);
+maintenance.pathname = target.pathname;
+const client = new pg.Client({ connectionString: maintenance.toString() });
+await client.connect();
 try {
   const service = (
     await client.query("SELECT id FROM public.servicios LIMIT 1")
@@ -44,6 +50,5 @@ try {
     JSON.stringify({ code: "LLA1:V:" + id, folio, totalCents: 116000 }),
   );
 } finally {
-  client.release();
-  await global._adminDatabase?.pool.end();
+  await client.end();
 }

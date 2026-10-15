@@ -1,16 +1,20 @@
 # Sistema Administración · LLA-9
 
-App local con Next.js, React, TypeScript y PostgreSQL. Usa la misma base compartida
-que `sistemaBodega` y `llaneteramulti`, con registros propios en `administracion`.
-No incluye inicio de sesión.
+App local con Next.js, React, TypeScript y PostgreSQL, sin inicio de sesión.
+Guarda ventas manuales, empleados, gastos y liquidaciones en una base propia.
+Consulta la base de `sistemaBodega` y `llaneteramulti` con una conexión de sólo lectura.
 
 ## Secciones
 
 - **Registro:** nueva venta, nueva salida y lectura de tickets.
-- **Resumen:** ganancias, cobros, historial de ventas/salidas y pagos pendientes
+- **Resumen:** ganancias, ventas a crédito, historial de ventas/salidas y pagos pendientes
   a proveedores y empleados.
 - **Empleados:** agregar, editar, eliminar/restaurar y consultar comisiones por
-  día, semana o mes. Liquidar juntos los pendientes del empleado y periodo elegidos.
+  día, semana, mes o rango personalizado. Liquidar un periodo o todas las pendientes
+  del empleado, sin límite de mes.
+
+Día, semana y mes usan botones y flechas entre periodos, sin campos de fecha.
+Sólo el rango personalizado solicita fecha inicial y final.
 
 Fondo blanco, texto grande y controles accesibles. Los proveedores se recuerdan
 al confirmar una salida y completan el concepto y el pago de capturas futuras.
@@ -22,12 +26,13 @@ Escanear sólo prerrellena el formulario; el administrador debe guardar para
 registrar. **Nueva venta** abre un formulario manual con producto/servicio,
 cantidad, precio, forma de pago, cliente y comisión opcional (empleado e importe).
 El servidor genera folio interno y fecha comercial; confirma el cobro completo.
-El porcentaje sugerido prerrellena el monto de comisión y éste se puede editar.
 Todos los campos y botones caben sin scroll en móvil y escritorio. Funciona aunque
 la venta no exista en los otros sistemas; requiere que la base de Administración
-esté disponible. **Escanear ticket** busca
-el documento existente y recupera fecha, folio, cliente, teléfono, partidas,
+esté disponible. **Escanear ticket** busca el documento existente y recupera
+fecha, folio, cliente, teléfono, partidas,
 subtotal, IVA, total y forma de pago. Sólo la confirmación crea el registro.
+El detalle conserva los artículos, cantidades, precios unitarios, importes por
+partida, subtotal, IVA y total; no cambia los importes del ticket de origen.
 
 El servidor resuelve la identidad canónica y PostgreSQL exige UNIQUE(tabla, id).
 La captura compacta genera `MAN-<UUID de la solicitud>` y conserva ese identificador
@@ -50,8 +55,8 @@ Los cambios de tickets están en `sistema-administracion` de ambos sistemas.
 Reimprimir conserva el mismo código. El lector debe emular un teclado y terminar
 con Enter o Tab. Se controla el foco, se admite el prefijo AIM `]C0` de CODE128
 y nunca se confirma una venta mediante el fin del escaneo. Los tickets anteriores
-pueden buscarse por folio o ID; si el folio
-es ambiguo, se debe usar la identidad completa.
+pueden buscarse por folio o ID; si el folio es ambiguo, se debe usar la identidad
+completa.
 
 Las consultas externas se limitan a la búsqueda y validación explícita del ticket.
 No se modifica stock, documentos de venta, folios, IVA histórico ni archivos
@@ -60,35 +65,59 @@ anulan manualmente aquí. Nuevos abonos sobre un ticket cancelado se rechazan.
 
 ## Inicio local
 
-Requiere Node.js 22.18+ y el PostgreSQL local compartido preparado.
+Requiere Node.js 22.18+ y el PostgreSQL local preparado en `127.0.0.1:55439`.
+La configuración local usa dos bases y credenciales diferentes:
+
+| Conexión              | Base                         | Acceso                                      |
+| --------------------- | ---------------------------- | ------------------------------------------- |
+| `DATABASE_URL`        | `llantas_administracion_dev` | Escritura propia con `sistema_admin_writer` |
+| `SHARED_DATABASE_URL` | `llantas_unified_dev`        | SELECT con `sistema_admin_source_reader`    |
 
 1. `npm ci`.
-2. Completar `.env.local` a partir de `.env.example`, con la conexión y el UUID
-   de la instancia local de desarrollo.
+2. Conservar la configuración privada preparada en `.env.local`; `.env.example`
+   documenta ambas conexiones y sus identidades.
 3. Si la base está detenida, ejecutar `npm run dev:db` en `C:\dev\sistemaBodega`.
 4. `npm run db:migrate`.
 5. `npm run dev` y abrir [Administración](http://127.0.0.1:3002).
 
+Para preparar esta separación por primera vez, `scripts/setup-storage.mjs` recibe
+la conexión propietaria local de `llantas_unified_dev` mediante `DATABASE_URL`,
+`SHARED_DATABASE_ENVIRONMENT=development` y su `SHARED_DATABASE_ID`. Se ejecuta con
+`node --env-file=.env.local scripts/setup-storage.mjs` antes de iniciar la app.
+La instancia anterior de Administración debe estar detenida durante el traslado.
+Crea la base y los roles propios, copia el historial previo de Administración
+desde una instantánea de lectura, sin borrar el original, y reemplaza `.env.local`
+por las conexiones limitadas.
+Guarda el estado, respaldo y conexión de mantenimiento sólo en `.local/`, fuera
+de Git. Rechaza bases o roles de destino desconocidos; las siguientes ejecuciones
+usan su estado privado. Este preparador sólo admite la instancia local indicada.
+
 El servidor escucha en loopback. Las APIs no requieren login; las escrituras
 validan el origen de la petición. El pool comprueba versión, entorno, nombre e
-identidad de la base antes de operar. Desarrollo rechaza una instancia productiva.
+identidad de cada base antes de operar. La conexión de origen tiene SELECT y
+transacciones de sólo lectura; la app no escribe en la base compartida.
+Desarrollo rechaza una instancia productiva.
 Las variables privadas, respaldos y datos de QA quedan fuera de Git.
 
 ## Cifras y persistencia
 
 Ganancia = entradas − salidas − comisiones generadas en el período.
-Los saldos pendientes abarcan todas las fechas. Los pagos parciales se ligan al
-registro original y no crean otra compra, gasto o venta. Los importes usan centavos.
+Los saldos pendientes abarcan todas las fechas. **Ventas a crédito** muestra el
+dinero que falta cobrar de ventas registradas con pago parcial o pendiente.
+Los pagos parciales se ligan al registro original y no crean otra compra, gasto
+o venta. Los importes usan centavos.
 Las fechas comerciales corresponden a Ciudad de México; las semanas comienzan
 el lunes. No se inventan costos de inventario ni se calcula utilidad fiscal.
 
 Cada entrada tiene una sola comisión opcional y un único empleado, asignados
-antes de confirmar la venta. El administrador puede guardar un porcentaje
-sugerido; el importe y porcentaje elegidos quedan fijados en cada comisión.
+antes de confirmar la venta. El dueño captura el importe manualmente: debe ser
+mayor a cero y no superar el total de la venta. No hay porcentajes sugeridos ni
+preferencias guardables.
 Dar de baja al empleado conserva su historial y permite pagar deudas anteriores.
 La liquidación agrupa únicamente las comisiones pendientes revisadas por empleado
-y periodo. Guarda un comprobante interno y se confirma de forma atómica:
-si otro pago se adelanta, se rechaza el grupo y se pide actualizar. Un trigger
+y periodo, o todas las pendientes de cualquier fecha. Guarda un comprobante
+interno y se confirma de forma atómica: si otro pago se adelanta, se rechaza el
+grupo y se pide actualizar. Un trigger
 impide modificar o reabrir una comisión pagada. Los reintentos devuelven el mismo pago.
 Las operaciones y reintentos se confirman junto con su resultado durable, y los
 bloqueos de fila impiden abonos simultáneos por encima del saldo.
@@ -106,17 +135,20 @@ npm run build
 npm run test:integration
 ```
 
-La integración crea su propio `llantas_admin_tests` en 127.0.0.1:55439, ejecuta
-pruebas reales y elimina únicamente ese clon. Si ya existe, se detiene sin
-sobrescribirlo. No añade fixtures a la base de desarrollo ni a producción.
-`--keep` permite retener el clon para QA y escribe `.local/test.env`, ignorado por Git.
+La integración crea dos clones en `127.0.0.1:55439`: `llantas_admin_tests`
+(Administración) y `llantas_admin_source_tests` (origen). Usa la conexión privada
+de mantenimiento generada por el preparador para crearlos y eliminarlos, y
+comprueba que el lector de origen rechace escrituras. Si cualquiera ya existe,
+se detiene sin sobrescribirlo. Los fixtures sólo se crean en los clones.
+`npm run test:integration -- --keep` retiene ambos para QA y escribe
+`.local/test.env`, ignorado por Git.
 Las pruebas del contrato de impresión se ejecutan con `npm run test:ticket-barcodes`
 en ambos repositorios de ventas: un decodificador independiente lee las imágenes
 CODE128 renderizadas a 203 y 300 dpi. La impresora y el lector físicos deben probarse
 con un ticket real antes del uso operativo.
 
-Las migraciones son aditivas y transaccionales. No se aplicaron a producción ni
-se desplegó la aplicación. El código de la app nunca ejecuta migraciones desde
-una petición.
+Las migraciones se aplican en una transacción, sólo en la base propia.
+No se aplicaron a producción ni se desplegó la aplicación. El código de la app
+nunca ejecuta migraciones desde una petición.
 
 Configuración del lector y comprobación física: [guía de tickets](docs/scanner.md).
