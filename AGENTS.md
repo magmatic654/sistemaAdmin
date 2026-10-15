@@ -15,6 +15,13 @@
   en escritorio y móvil; distribuir en columnas para pantallas horizontales bajas.
 - Comprobar folio/origen e ID disponible para impedir duplicados entre captura
   manual y escaneo. La comisión se asigna junto con la venta, nunca después.
+- Toda venta manual sin ticket validado requiere revisión. Su referencia interna
+  no es un folio de origen. Congelar su comisión hasta aprobación manual explícita
+  o validación de ticket; aplicar esta regla también en pagos individuales y lotes.
+- Validar un ticket requiere mostrar los datos reales y confirmar su actualización
+  en Administración. Conservar auditoría y alias anteriores para evitar duplicados;
+  una búsqueda sin coincidencias no aprueba ni altera la venta. No reescribir
+  registros con comisiones ya pagadas.
 - Capturar la comisión como importe manual mayor a cero y hasta el total de la venta;
   no implementar porcentajes sugeridos ni preferencias de comisión.
 - Consultar por día, semana, mes o rango personalizado. Sólo el rango personalizado

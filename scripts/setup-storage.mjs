@@ -157,6 +157,7 @@ try {
       "004-offline-manual-sales.sql",
       "005-periods.sql",
       "006-administration-identity.sql",
+      "007-sale-review.sql",
     ])
       await admin.query(
         await fs.readFile(
@@ -176,6 +177,7 @@ try {
         "payments",
         "commission_payouts",
         "commissions",
+        "sale_identity_aliases",
         "operations",
         "audit",
         "preferences",
@@ -204,7 +206,7 @@ try {
               : row[c.column_name],
           );
           const result = await admin.query(
-            `INSERT INTO administracion.${table} (${names}) ${table === "audit" ? "OVERRIDING SYSTEM VALUE" : ""} VALUES(${params}) ON CONFLICT DO NOTHING`,
+            `INSERT INTO administracion.${table} (${names}) ${["audit", "sale_identity_aliases"].includes(table) ? "OVERRIDING SYSTEM VALUE" : ""} VALUES(${params}) ON CONFLICT DO NOTHING`,
             values,
           );
           if (!result.rowCount) {
@@ -240,6 +242,9 @@ try {
       }
       await admin.query(
         "SELECT setval(pg_get_serial_sequence('administracion.audit','id'),GREATEST(COALESCE((SELECT max(id) FROM administracion.audit),0),1),EXISTS(SELECT 1 FROM administracion.audit))",
+      );
+      await admin.query(
+        "SELECT setval(pg_get_serial_sequence('administracion.sale_identity_aliases','id'),GREATEST(COALESCE((SELECT max(id) FROM administracion.sale_identity_aliases),0),1),EXISTS(SELECT 1 FROM administracion.sale_identity_aliases))",
       );
     }
     await admin.query("COMMIT");

@@ -1,4 +1,5 @@
 import type { Line } from "./domain";
+export type ReviewStatus = "pending" | "approved" | "validated" | null;
 export type Employee = {
   id: string;
   name: string;
@@ -32,6 +33,7 @@ export type Sale = {
   items: Line[];
   cancelled: boolean;
   registeredId: string | null;
+  fingerprint: string;
 };
 export type Movement = {
   id: string;
@@ -66,6 +68,9 @@ export type Movement = {
   employee_name: string | null;
   commission_cents: number | null;
   commission_paid_on: string | null;
+  review_status: ReviewStatus;
+  review_version: number;
+  reviewed_at: string | null;
 };
 export type Payment = {
   id: string;
@@ -83,6 +88,7 @@ export type Summary = {
   commissionPaid: number;
   payable: number;
   employeePayable: number;
+  employeeFrozen: number;
   profit: number;
   cash: number;
   cancelled: number;
@@ -100,6 +106,7 @@ export type CommissionRow = {
   paid_on: string | null;
   source_cancelled: boolean;
   voided_at: string | null;
+  review_status: ReviewStatus;
 };
 export type AdminState = {
   summary: Summary;
@@ -111,6 +118,7 @@ export type AdminState = {
   total: number;
   page: number;
   pageSize: number;
+  reviewCount: number;
   range: { from: string; to: string };
 };
 export type PayoutPreview = {
@@ -120,4 +128,6 @@ export type PayoutPreview = {
   totalCents: number;
   snapshot: string;
   commissions: CommissionRow[];
+  frozenCents: number;
+  frozenCount: number;
 };

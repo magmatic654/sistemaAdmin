@@ -15,6 +15,8 @@ import {
   X,
   ReceiptText,
   Banknote,
+  ClipboardCheck,
+  LockKeyhole,
 } from "lucide-react";
 import type {
   AdminState,
@@ -35,11 +37,12 @@ import {
   MovementForm,
   PaymentForm,
   TicketLookup,
+  SaleReviewForm,
   type Write,
 } from "./forms";
 
 type Section = "registro" | "resumen" | "empleados";
-type Panel = "ventas" | "salidas" | "proveedores" | "comisiones";
+type Panel = "ventas" | "salidas" | "proveedores" | "comisiones" | "revision";
 type Dialog = {
   type:
     | "entrada"
@@ -49,6 +52,7 @@ type Dialog = {
     | "detail"
     | "payment"
     | "payout"
+    | "review"
     | "void";
   source?: Sale;
   initial?: Employee;
@@ -66,9 +70,14 @@ const panels = [
   { id: "salidas" as const, label: "Salidas" },
   { id: "proveedores" as const, label: "Proveedores" },
   { id: "comisiones" as const, label: "Comisiones" },
+  { id: "revision" as const, label: "Revisión" },
 ];
 
 function Status({ m }: { m: Movement }) {
+  if (!m.voided_at && m.kind === "entrada" && m.review_status === "pending")
+    return <span className="pill review-pill">Requiere revisión</span>;
+  if (!m.voided_at && m.review_status === "approved")
+    return <span className="pill manual-approved">Manual aprobada</span>;
   return (
     <span
       className={
@@ -128,11 +137,13 @@ export default function Dashboard({ today }: { today: string }) {
       ? "comisiones"
       : panel === "ventas"
         ? "entradas"
-        : panel === "salidas"
-          ? "salidas"
-          : panel === "comisiones"
-            ? "comisiones-pendientes"
-            : "proveedores";
+        : panel === "revision"
+          ? "revision"
+          : panel === "salidas"
+            ? "salidas"
+            : panel === "comisiones"
+              ? "comisiones-pendientes"
+              : "proveedores";
   useEffect(() => {
     const value = new URL(window.location.href).searchParams.get("seccion");
     if (value === "resumen" || value === "empleados") setSection(value);
@@ -220,12 +231,12 @@ export default function Dashboard({ today }: { today: string }) {
       setToast((error as Error).message);
     }
   }
-  async function detail(movement: Movement) {
+  async function detail(movement: Pick<Movement, "id">, review = false) {
     try {
       const response = await fetch("/api/admin?detail=" + movement.id);
       const result = await response.json();
       if (!response.ok) throw Error(result.error);
-      setDialog({ type: "detail", ...result });
+      setDialog({ ...result, type: review ? "review" : "detail" });
     } catch (error) {
       setToast((error as Error).message);
     }
@@ -270,7 +281,14 @@ export default function Dashboard({ today }: { today: string }) {
                 <tr key={m.id} role="row">
                   <td role="cell" data-label="Fecha" className="mobile-wide">
                     {shortDate(m.date)}
-                    <small>{m.source_folio || m.reference}</small>
+                    <small>
+                      {m.source_folio || m.reference}
+                      {m.kind === "entrada" && !m.source_id && (
+                        <span className="manual-reference">
+                          Sin folio validado
+                        </span>
+                      )}
+                    </small>
                   </td>
                   <td
                     role="cell"
@@ -312,7 +330,14 @@ export default function Dashboard({ today }: { today: string }) {
                     aria-label="Acciones"
                     className="align-right mobile-wide"
                   >
-                    {panel === "proveedores" ? (
+                    {panel === "revision" ? (
+                      <button
+                        className="button secondary small review-action"
+                        onClick={() => void detail(m, true)}
+                      >
+                        Revisar
+                      </button>
+                    ) : panel === "proveedores" ? (
                       <button
                         className="button secondary small"
                         onClick={() =>
@@ -423,9 +448,24 @@ export default function Dashboard({ today }: { today: string }) {
                   </td>
                   <td role="cell" data-label="Estado">
                     <span
-                      className={"pill " + (c.paid_on ? "success" : "pending")}
+                      className={
+                        "pill " +
+                        (c.paid_on
+                          ? "success"
+                          : c.review_status === "pending"
+                            ? "frozen-pill"
+                            : "pending")
+                      }
                     >
-                      {c.paid_on ? "Pagada" : "Pendiente"}
+                      {c.paid_on ? (
+                        "Pagada"
+                      ) : c.review_status === "pending" ? (
+                        <>
+                          <LockKeyhole size={13} /> Congelada
+                        </>
+                      ) : (
+                        "Pendiente"
+                      )}
                     </span>
                   </td>
                   <td
@@ -434,7 +474,15 @@ export default function Dashboard({ today }: { today: string }) {
                     aria-label="Acciones"
                     className="mobile-wide"
                   >
-                    {!c.paid_on && (
+                    {!c.paid_on && c.review_status === "pending" && (
+                      <button
+                        className="text-button"
+                        onClick={() => void detail({ id: c.movement_id }, true)}
+                      >
+                        Revisar venta
+                      </button>
+                    )}
+                    {!c.paid_on && c.review_status !== "pending" && (
                       <button
                         className="text-button"
                         onClick={() =>
@@ -464,6 +512,7 @@ export default function Dashboard({ today }: { today: string }) {
         detail: "Detalle",
         payment: "Registrar pago",
         payout: "Liquidar comisiones",
+        review: "Revisar venta",
         void: "Anular registro",
       }[dialog.type]
     : "";
@@ -521,6 +570,18 @@ export default function Dashboard({ today }: { today: string }) {
           )}
           {section === "registro" && (
             <span className="date-stamp">{shortDate(today)}</span>
+          )}
+          {section !== "empleados" && !!data?.reviewCount && (
+            <button
+              className="review-shortcut"
+              onClick={() => {
+                navigate("resumen");
+                choosePanel("revision");
+              }}
+            >
+              <ClipboardCheck size={19} />
+              Por revisar <strong>{data.reviewCount}</strong>
+            </button>
           )}
         </div>
         {error && (
@@ -714,6 +775,11 @@ export default function Dashboard({ today }: { today: string }) {
                           <strong className="number">
                             {money(summary!.employeePayable)}
                           </strong>
+                          {!!summary!.employeeFrozen && (
+                            <small className="frozen-summary">
+                              {money(summary!.employeeFrozen)} congeladas
+                            </small>
+                          )}
                         </div>
                         <ChevronRight size={23} aria-hidden="true" />
                       </button>
@@ -728,10 +794,21 @@ export default function Dashboard({ today }: { today: string }) {
                           onClick={() => choosePanel(item.id)}
                         >
                           {item.label}
+                          {item.id === "revision" && !!data.reviewCount && (
+                            <span className="review-count">
+                              {data.reviewCount}
+                            </span>
+                          )}
                         </button>
                       ))}
                     </div>
                   </div>
+                  {panel === "revision" && (
+                    <div className="review-list-heading">
+                      <span>Ventas manuales sin folio validado</span>
+                      <span>Todas las fechas</span>
+                    </div>
+                  )}
                   {panel === "comisiones" ? commissionTable() : movementTable()}
                 </>
               )}
@@ -822,6 +899,12 @@ export default function Dashboard({ today }: { today: string }) {
                               ),
                               paid = rows
                                 .filter((c) => c.paid_on)
+                                .reduce((sum, c) => sum + c.amount_cents, 0),
+                              frozen = rows
+                                .filter(
+                                  (c) =>
+                                    !c.paid_on && c.review_status === "pending",
+                                )
                                 .reduce((sum, c) => sum + c.amount_cents, 0);
                             return (
                               <tr
@@ -874,6 +957,11 @@ export default function Dashboard({ today }: { today: string }) {
                                   className="number align-right"
                                 >
                                   {money(total - paid)}
+                                  {!!frozen && (
+                                    <small className="frozen-summary">
+                                      {money(frozen)} congeladas
+                                    </small>
+                                  )}
                                 </td>
                                 <td
                                   role="cell"
@@ -993,6 +1081,15 @@ export default function Dashboard({ today }: { today: string }) {
               onVoid={() =>
                 setDialog({ ...dialog, type: "void", id: dialog.movement!.id })
               }
+              onReview={() => setDialog({ ...dialog, type: "review" })}
+            />
+          )}
+          {dialog.type === "review" && dialog.movement && (
+            <SaleReviewForm
+              movement={dialog.movement}
+              write={write}
+              onDone={saved}
+              onClose={() => setDialog(null)}
             />
           )}
           {dialog.type === "payment" && dialog.movement && (

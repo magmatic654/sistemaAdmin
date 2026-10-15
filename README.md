@@ -44,6 +44,23 @@ sus comprobaciones frente a un escaneo posterior. Bloqueos transaccionales e
 índices impiden repetir esos identificadores, incluso en guardados simultáneos.
 Anular conserva los identificadores ocupados y el historial.
 
+Las ventas manuales aparecen como **Requiere revisión**. `MAN-…` es una referencia
+interna, no un folio validado. La pestaña **Revisión** reúne las pendientes de
+cualquier fecha. La venta y su comisión siguen formando parte del cálculo del
+periodo, pero la comisión queda congelada y fuera de cualquier liquidación.
+El administrador puede aprobar la captura manual o buscar un folio/código y
+confirmar **Validar y actualizar** después de revisar el ticket real. Sin
+coincidencias no cambia el registro ni se libera la comisión.
+
+La validación actualiza únicamente el registro propio con fecha, cliente, forma
+de pago, artículos, subtotal, IVA y total del ticket; conserva un cobro completo.
+No crea otra venta ni modifica el documento externo. Mantiene el empleado y el
+importe de comisión; si supera el nuevo total, exige ajustar el importe antes de
+confirmar. Conserva auditoría de los valores anteriores y sus identificadores
+para impedir duplicados posteriores. Un ticket modificado desde la revisión,
+cancelado o ya usado por otra venta se rechaza. Una comisión pagada no se reabre
+ni permite reescribir la venta mediante validación.
+
 El código impreso incluye versión, tabla e ID:
 
 ```text

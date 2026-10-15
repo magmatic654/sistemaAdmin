@@ -68,7 +68,7 @@ function saleRow(row: RecordInput): Sale {
     }
     costCents += storedCents(item.costoSubtotal);
   }
-  return {
+  const sale = {
     kind: String(row.kind),
     id: String(row.id),
     folio: String(row.folio),
@@ -89,6 +89,14 @@ function saleRow(row: RecordInput): Sale {
     cancelled: Boolean(row.cancelled),
     registeredId: row.registered_id as string | null,
   };
+  // Only source-owned facts form the confirmation fingerprint. Registration is local.
+  const { registeredId: _registered, ...facts } = sale;
+  return {
+    ...sale,
+    fingerprint: createHash("sha256")
+      .update(JSON.stringify(facts))
+      .digest("hex"),
+  };
 }
 
 export async function lookupSales(
@@ -104,10 +112,12 @@ export async function lookupSales(
   const result = await queryShared(sql, values);
   const sales: Sale[] = [];
   for (const row of result.rows) {
-    const registrationSql = `SELECT id FROM administracion.movements WHERE
-      (source_kind=$1 AND source_id=$2) OR manual_ticket_code=$3 OR
-      (lower(btrim(manual_folio))=lower(btrim($4)) AND manual_origin IN ('manual',$5))
-      ORDER BY created_at LIMIT 1`;
+    const registrationSql = `SELECT m.id FROM administracion.movements m WHERE
+      (m.source_kind=$1 AND m.source_id=$2) OR m.manual_ticket_code=$3 OR
+      (lower(btrim(m.manual_folio))=lower(btrim($4)) AND m.manual_origin IN ('manual',$5)) OR
+      EXISTS(SELECT 1 FROM administracion.sale_identity_aliases a WHERE a.movement_id=m.id AND
+        (a.ticket_code=$3 OR (lower(btrim(a.folio))=lower(btrim($4)) AND a.origin IN ('manual',$5))))
+      ORDER BY m.created_at LIMIT 1`;
     const params = [
       row.kind,
       row.id,
@@ -161,6 +171,9 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     condition =
       "l.kind='salida' AND l.total_cents>l.paid_cents AND NOT l.source_cancelled AND l.voided_at IS NULL AND $1::date<=$2::date";
   }
+  if (view === "revision")
+    condition =
+      "l.kind='entrada' AND l.review_status='pending' AND l.voided_at IS NULL AND $1::date<=$2::date";
   if (search) {
     values.push("%" + search.replace(/[\\%_]/g, "\\$&") + "%");
     condition += ` AND concat_ws(' ',l.concept,l.contact,l.source_folio,l.manual_folio,l.reference,l.employee_name) ILIKE $${values.length}`;
@@ -174,6 +187,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     employees,
     suppliers,
     commissions,
+    review,
   ] = await Promise.all([
     query(
       `SELECT
@@ -195,7 +209,8 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
       [from, to],
     ),
     query(`SELECT COALESCE(sum(total_cents-paid_cents) FILTER(WHERE kind='salida'),0) AS payable,
-      COALESCE(sum(commission_cents) FILTER(WHERE commission_paid_on IS NULL),0) AS employee_payable
+      COALESCE(sum(commission_cents) FILTER(WHERE commission_paid_on IS NULL),0) AS employee_payable,
+      COALESCE(sum(commission_cents) FILTER(WHERE commission_paid_on IS NULL AND review_status='pending'),0) AS employee_frozen
       FROM administracion.manual_ledger WHERE voided_at IS NULL AND NOT source_cancelled`),
     query(
       `SELECT l.*,l.date::text, l.commission_paid_on::text FROM administracion.manual_ledger l WHERE ${condition}
@@ -214,10 +229,13 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     ),
     query(
       `SELECT c.id,c.movement_id,l.date::text,l.concept,l.contact,COALESCE(l.source_folio,l.manual_folio) AS source_folio,c.employee_id,l.employee_name,
-      c.amount_cents,c.paid_on::text,l.source_cancelled,l.voided_at
+      c.amount_cents,c.paid_on::text,l.source_cancelled,l.voided_at,l.review_status
       FROM administracion.commissions c JOIN administracion.manual_ledger l ON l.id=c.movement_id
       WHERE ${view === "comisiones-pendientes" ? "c.paid_on IS NULL AND l.voided_at IS NULL AND $1::date<=$2::date" : "l.date BETWEEN $1::date AND $2::date"} ORDER BY l.date DESC,c.created_at DESC`,
       [from, to],
+    ),
+    query(
+      "SELECT count(*) AS count FROM administracion.movements WHERE kind='entrada' AND review_status='pending' AND voided_at IS NULL",
     ),
   ]);
   const t = totals.rows[0],
@@ -233,6 +251,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     commissionPaid: Number(c.commission_paid),
     payable: Number(p.payable),
     employeePayable: Number(p.employee_payable),
+    employeeFrozen: Number(p.employee_frozen),
     profit: 0,
     cash: 0,
   };
@@ -244,6 +263,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     total: Number(count.rows[0].count),
     page,
     pageSize,
+    reviewCount: Number(review.rows[0].count),
     employees: employees.rows,
     suppliers: suppliers.rows,
     range: { from, to },
@@ -377,6 +397,7 @@ async function checkEntryIdentity(
   origin: string,
   code: string | null,
   manual = false,
+  excludeId: string | null = null,
 ) {
   // A single folio lock also serializes unknown-origin manual tickets against either app.
   await client.query(
@@ -389,12 +410,23 @@ async function checkEntryIdentity(
     ]);
   const identity = code ? parseTicketReference(code) : null;
   const duplicate = await client.query(
-    `SELECT id FROM administracion.movements WHERE
-    (lower(btrim(COALESCE(source_folio,manual_folio)))=lower(btrim($1)) AND
-      ($2='manual' OR COALESCE(source_origin,manual_origin) IN ('manual',$2)) AND
-      ($5::boolean OR manual_folio IS NOT NULL)) OR
-    ($3::text IS NOT NULL AND (manual_ticket_code=$3 OR (source_kind=$4 AND source_id=$6))) LIMIT 1`,
-    [folio, origin, code, identity?.kind || null, manual, identity?.id || null],
+    `SELECT m.id FROM administracion.movements m WHERE ($7::uuid IS NULL OR m.id<>$7::uuid) AND (
+    (lower(btrim(COALESCE(m.source_folio,m.manual_folio)))=lower(btrim($1)) AND
+      ($2='manual' OR COALESCE(m.source_origin,m.manual_origin) IN ('manual',$2)) AND
+      ($5::boolean OR m.manual_folio IS NOT NULL)) OR
+    ($3::text IS NOT NULL AND (m.manual_ticket_code=$3 OR (m.source_kind=$4 AND m.source_id=$6))) OR
+    EXISTS(SELECT 1 FROM administracion.sale_identity_aliases a WHERE a.movement_id=m.id AND (
+      (lower(btrim(a.folio))=lower(btrim($1)) AND ($2='manual' OR a.origin IN ('manual',$2))) OR
+      ($3::text IS NOT NULL AND a.ticket_code=$3)))) LIMIT 1`,
+    [
+      folio,
+      origin,
+      code,
+      identity?.kind || null,
+      manual,
+      identity?.id || null,
+      excludeId,
+    ],
   );
   if (duplicate.rows.length)
     throw new ValidationError(
@@ -554,8 +586,8 @@ async function createMovement(client: PoolClient, input: RecordInput) {
   await client.query(
     `INSERT INTO administracion.movements(id,kind,date,concept,category,contact,phone,supplier_id,items,
     subtotal_cents,tax_cents,total_cents,method,reference,notes,source_kind,source_id,source_folio,source_origin,cost_cents,
-    manual_folio,manual_origin,manual_ticket_code)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+    manual_folio,manual_origin,manual_ticket_code,review_status)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
     [
       id,
       kind,
@@ -582,6 +614,7 @@ async function createMovement(client: PoolClient, input: RecordInput) {
       manualFolio,
       manualOrigin,
       manualCode,
+      kind === "entrada" ? (source ? "validated" : "pending") : null,
     ],
   );
   if (input.commission != null) {
@@ -636,6 +669,7 @@ async function pendingPayoutRows(
     `SELECT c.id,c.movement_id,c.amount_cents
     FROM administracion.commissions c JOIN administracion.movements m ON m.id=c.movement_id
     WHERE c.employee_id=$1 AND c.paid_on IS NULL AND m.voided_at IS NULL
+    AND m.review_status IN ('approved','validated')
     AND m.date BETWEEN $2::date AND $3::date ORDER BY c.id`,
     [employeeId, from, to],
   );
@@ -658,16 +692,21 @@ export async function payoutPreview(
     throw new ValidationError("Selecciona un empleado.");
   const result = await query(
     `SELECT c.id,c.movement_id,l.date::text,l.concept,l.contact,COALESCE(l.source_folio,l.manual_folio) AS source_folio,
-    c.employee_id,l.employee_name,c.amount_cents,c.paid_on::text,l.source_cancelled,l.voided_at
+    c.employee_id,l.employee_name,c.amount_cents,c.paid_on::text,l.source_cancelled,l.voided_at,l.review_status
     FROM administracion.commissions c JOIN administracion.manual_ledger l ON l.id=c.movement_id
     WHERE c.employee_id=$1 AND c.paid_on IS NULL AND l.voided_at IS NULL
     AND l.date BETWEEN $2::date AND $3::date ORDER BY l.date,c.id`,
     [employeeId, from, to],
   );
-  const commissions = result.rows.map((row) => ({
+  const rows = result.rows.map((row) => ({
     ...row,
     amount_cents: Number(row.amount_cents),
   })) as CommissionRow[];
+  const commissions = rows.filter(
+    (row) =>
+      row.review_status === "approved" || row.review_status === "validated",
+  );
+  const frozen = rows.filter((row) => row.review_status === "pending");
   return {
     employeeId,
     from,
@@ -675,6 +714,8 @@ export async function payoutPreview(
     commissions,
     totalCents: commissions.reduce((sum, c) => sum + c.amount_cents, 0),
     snapshot: payoutSnapshot(employeeId, from, to, commissions),
+    frozenCents: frozen.reduce((sum, row) => sum + row.amount_cents, 0),
+    frozenCount: frozen.length,
   };
 }
 
@@ -742,8 +783,9 @@ async function payCommissions(client: PoolClient, input: RecordInput) {
     source_kind: string | null;
     source_id: string | null;
     voided_at: string | null;
+    review_status: string;
   }>(
-    `SELECT m.id,m.source_kind,m.source_id,m.voided_at FROM administracion.movements m
+    `SELECT m.id,m.source_kind,m.source_id,m.voided_at,m.review_status FROM administracion.movements m
     WHERE m.id=ANY($1::uuid[]) ORDER BY m.id FOR UPDATE`,
     [initial.rows.map((commission) => commission.movement_id)],
   );
@@ -753,6 +795,14 @@ async function payCommissions(client: PoolClient, input: RecordInput) {
     );
   if (movements.rows.some((movement) => movement.voided_at))
     throw new ValidationError("El movimiento está anulado.");
+  if (
+    movements.rows.some(
+      (movement) => !["approved", "validated"].includes(movement.review_status),
+    )
+  )
+    throw new ValidationError(
+      "Hay comisiones congeladas. Revisa o valida primero la venta.",
+    );
   // Source tickets are read in groups; historical payouts need only two source
   // queries regardless of how many individual commissions the owner reviews.
   for (const kind of ["ventas", "ventas_productos"] as const) {
@@ -828,6 +878,281 @@ async function payCommissions(client: PoolClient, input: RecordInput) {
   return { id, totalCents: total, count: ids.length };
 }
 
+async function lockSaleForReview(client: PoolClient, input: RecordInput) {
+  const id = uuid(input.id);
+  const version = input.reviewVersion;
+  if (!Number.isSafeInteger(version) || Number(version) < 1)
+    throw new ValidationError("Actualiza la venta antes de revisarla.");
+  // All review and settlement paths acquire employee -> movement -> commission.
+  // This prevents a formerly frozen commission entering a reviewed payout mid-flight.
+  const assigned = await client.query(
+    "SELECT employee_id FROM administracion.commissions WHERE movement_id=$1",
+    [id],
+  );
+  if (assigned.rows.length)
+    await client.query(
+      "SELECT id FROM administracion.employees WHERE id=$1 FOR UPDATE",
+      [assigned.rows[0].employee_id],
+    );
+  const movement = await client.query(
+    "SELECT m.*,m.date::text FROM administracion.movements m WHERE id=$1 FOR UPDATE",
+    [id],
+  );
+  const row = movement.rows[0];
+  if (!row || row.kind !== "entrada" || row.voided_at)
+    throw new ValidationError("La venta ya no está disponible para revisión.");
+  if (row.review_version !== version)
+    throw new ValidationError("La venta cambió. Actualiza antes de confirmar.");
+  if (row.source_id || !["pending", "approved"].includes(row.review_status))
+    throw new ValidationError("Esta venta ya está validada con un ticket.");
+  const commission = await client.query(
+    "SELECT * FROM administracion.commissions WHERE movement_id=$1 FOR UPDATE",
+    [id],
+  );
+  const payments = await client.query(
+    "SELECT p.*,p.date::text FROM administracion.payments p WHERE movement_id=$1 ORDER BY created_at,id FOR UPDATE",
+    [id],
+  );
+  return {
+    movement: row,
+    commission: commission.rows[0] || null,
+    payments: payments.rows,
+  };
+}
+
+async function reviewAudit(
+  client: PoolClient,
+  action: string,
+  id: string,
+  requestId: string,
+  before: RecordInput,
+) {
+  const movement = await client.query(
+    "SELECT m.*,m.date::text FROM administracion.movements m WHERE id=$1",
+    [id],
+  );
+  const commission = await client.query(
+    "SELECT * FROM administracion.commissions WHERE movement_id=$1",
+    [id],
+  );
+  const payments = await client.query(
+    "SELECT p.*,p.date::text FROM administracion.payments p WHERE movement_id=$1 ORDER BY created_at,id",
+    [id],
+  );
+  await client.query(
+    "INSERT INTO administracion.audit(action,entity_id,details) VALUES($1,$2,$3::jsonb)",
+    [
+      action + ".changes",
+      id,
+      JSON.stringify({
+        requestId,
+        before,
+        after: {
+          movement: movement.rows[0],
+          commission: commission.rows[0] || null,
+          payments: payments.rows,
+        },
+      }),
+    ],
+  );
+}
+
+async function approveSale(
+  client: PoolClient,
+  input: RecordInput,
+  requestId: string,
+) {
+  const before = await lockSaleForReview(client, input);
+  if (before.movement.review_status !== "pending")
+    throw new ValidationError("Esta venta ya fue aprobada.");
+  await client.query(
+    "UPDATE administracion.movements SET review_status='approved',review_version=review_version+1,reviewed_at=now() WHERE id=$1",
+    [before.movement.id],
+  );
+  // Approval never touches commission.paid_on, including pre-review historical payouts.
+  await reviewAudit(
+    client,
+    "movement.review.approve",
+    before.movement.id,
+    requestId,
+    before,
+  );
+  return { id: before.movement.id };
+}
+
+async function validateSale(
+  client: PoolClient,
+  input: RecordInput,
+  requestId: string,
+) {
+  const id = uuid(input.id);
+  const kind = text(input.sourceKind, "Origen del ticket", 30);
+  const sourceId = text(input.sourceId, "ID del ticket", 80);
+  const code = ticketReference(kind, sourceId);
+  if (
+    typeof input.sourceFingerprint !== "string" ||
+    !/^[a-f\d]{64}$/.test(input.sourceFingerprint)
+  )
+    throw new ValidationError("Busca y revisa el ticket antes de validar.");
+  // Explicitly re-read the authorized source; it is never locked or written.
+  const found = await lookupSales(code, client);
+  if (found.length !== 1)
+    throw new ValidationError(
+      "No se encontró un ticket único. Revisa su código completo.",
+    );
+  const source = found[0];
+  if (source.cancelled)
+    throw new ValidationError("No se puede validar con un ticket cancelado.");
+  if (source.fingerprint !== input.sourceFingerprint)
+    throw new ValidationError(
+      "El ticket cambió. Búscalo y revisa sus datos de nuevo.",
+    );
+  if (source.registeredId && source.registeredId !== id)
+    throw new ValidationError(
+      "Este ticket ya está registrado en Administración.",
+    );
+  if (
+    source.totalCents < 1 ||
+    source.subtotalCents + source.taxCents !== source.totalCents ||
+    !source.items.length ||
+    !Number.isSafeInteger(source.totalCents) ||
+    source.totalCents > 99_999_999_999
+  )
+    throw new ValidationError(
+      "El ticket tiene importes inconsistentes; revisa el sistema de origen.",
+    );
+  date(source.date);
+  // Registration also locks identity before the employee. Reserve identity first
+  // so a simultaneous scan cannot invert folio -> employee and deadlock review.
+  await checkEntryIdentity(
+    client,
+    source.folio,
+    source.origin,
+    code,
+    false,
+    id,
+  );
+  const before = await lockSaleForReview(client, input);
+  if (before.commission?.paid_on)
+    throw new ValidationError(
+      "Esta venta tiene una comisión pagada. Conserva sus importes históricos.",
+    );
+  // Employee/movement locks can wait behind another operation. Confirm the source
+  // snapshot again after that wait without acquiring any source write locks.
+  const confirmed = await lookupSales(code, client);
+  if (
+    confirmed.length !== 1 ||
+    confirmed[0].cancelled ||
+    confirmed[0].fingerprint !== source.fingerprint
+  )
+    throw new ValidationError(
+      "El ticket cambió. Búscalo y revisa sus datos de nuevo.",
+    );
+  let commissionCents: number | null = before.commission
+    ? Number(before.commission.amount_cents)
+    : null;
+  if (input.commissionValue !== undefined) {
+    if (!before.commission)
+      throw new ValidationError(
+        "La comisión sólo puede asignarse al registrar la venta.",
+      );
+    commissionCents = commissionAmount(
+      source.totalCents,
+      "fixed",
+      input.commissionValue,
+    );
+  }
+  if (commissionCents !== null && commissionCents > source.totalCents)
+    throw new ValidationError(
+      "La comisión supera el total real. Ajusta el importe antes de validar.",
+    );
+  // Every prior manual identity remains reserved, even after its columns are replaced.
+  if (before.movement.manual_folio)
+    await client.query(
+      `INSERT INTO administracion.sale_identity_aliases(movement_id,folio,origin,ticket_code)
+       VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING`,
+      [
+        id,
+        before.movement.manual_folio,
+        before.movement.manual_origin,
+        before.movement.manual_ticket_code,
+      ],
+    );
+  await client.query(
+    `UPDATE administracion.movements SET date=$2,concept=$3,category='Venta con ticket',contact=$4,phone=$5,
+      items=$6::jsonb,subtotal_cents=$7,tax_cents=$8,total_cents=$9,method=$10,reference=$11,
+      source_kind=$12,source_id=$13,source_folio=$11,source_origin=$14,cost_cents=$15,
+      manual_folio=NULL,manual_origin=NULL,manual_ticket_code=NULL,
+      review_status='validated',review_version=review_version+1,reviewed_at=now() WHERE id=$1`,
+    [
+      id,
+      source.date,
+      source.items
+        .map((line) => line.description)
+        .join(" · ")
+        .slice(0, 300),
+      source.contact,
+      source.phone,
+      JSON.stringify(source.items),
+      source.subtotalCents,
+      source.taxCents,
+      source.totalCents,
+      method(source.method),
+      source.folio,
+      source.kind,
+      source.id,
+      source.origin,
+      source.costCents,
+    ],
+  );
+  if (
+    before.commission &&
+    commissionCents !== Number(before.commission.amount_cents)
+  )
+    await client.query(
+      "UPDATE administracion.commissions SET amount_cents=$2 WHERE id=$1",
+      [before.commission.id, commissionCents],
+    );
+  // Keep all payment rows and their identifiers. A historical multi-payment sale
+  // can be reconciled only when the oldest receipt can absorb the correction.
+  const [firstPayment, ...otherPayments] = before.payments;
+  const otherTotal = otherPayments.reduce(
+    (sum, payment) => sum + Number(payment.amount_cents),
+    0,
+  );
+  if (firstPayment) {
+    if (source.totalCents <= otherTotal)
+      throw new ValidationError(
+        "Los pagos históricos superan el ticket real. Revisa esta venta antes de validarla.",
+      );
+    await client.query(
+      "UPDATE administracion.payments SET date=$2,method=$3,reference=$4,amount_cents=CASE WHEN id=$5 THEN $6 ELSE amount_cents END WHERE movement_id=$1",
+      [
+        id,
+        source.date,
+        source.method,
+        source.folio,
+        firstPayment.id,
+        source.totalCents - otherTotal,
+      ],
+    );
+  } else {
+    await client.query(
+      "INSERT INTO administracion.payments(id,movement_id,date,amount_cents,method,reference) VALUES($1,$2,$3,$4,$5,$6)",
+      [
+        randomUUID(),
+        id,
+        source.date,
+        source.totalCents,
+        source.method,
+        source.folio,
+      ],
+    );
+  }
+  await reviewAudit(client, "movement.review.validate", id, requestId, before);
+  return { id };
+}
+
 async function executeAction(
   client: PoolClient,
   action: string,
@@ -870,6 +1195,10 @@ async function executeAction(
     });
   }
   if (action === "movement.create") return createMovement(client, input);
+  if (action === "movement.review.approve")
+    return approveSale(client, input, requestId);
+  if (action === "movement.review.validate")
+    return validateSale(client, input, requestId);
   if (action === "payment.create")
     return addPayment(client, uuid(input.movementId), input);
   if (action === "commission.create") {
@@ -890,6 +1219,10 @@ async function executeAction(
     if (!commission.rows.length)
       throw new ValidationError("La comisión no existe.");
     const movement = await lockMovement(client, commission.rows[0].movement_id);
+    if (!["approved", "validated"].includes(movement.review_status))
+      throw new ValidationError(
+        "Esta comisión está congelada. Revisa o valida primero la venta.",
+      );
     const paidOn = date(input.date);
     if (paidOn < movement.date)
       throw new ValidationError("El pago no puede ser anterior a la venta.");

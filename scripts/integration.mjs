@@ -92,6 +92,7 @@ try {
     "004-offline-manual-sales.sql",
     "005-periods.sql",
     "006-administration-identity.sql",
+    "007-sale-review.sql",
   ])
     await migrator.query(
       await fs.readFile(
@@ -104,6 +105,12 @@ try {
   assert.match(writerRole, /^[a-z_][a-z0-9_]*$/i);
   await migrator.query(
     `GRANT SELECT ON administracion.manual_ledger TO "${writerRole}"`,
+  );
+  await migrator.query(
+    `GRANT SELECT,INSERT,UPDATE ON administracion.sale_identity_aliases TO "${writerRole}"`,
+  );
+  await migrator.query(
+    `GRANT USAGE ON SEQUENCE administracion.sale_identity_aliases_id_seq TO "${writerRole}"`,
   );
   const identity = await connection.query(
     "SELECT environment,instance_id FROM administracion.configuration",
@@ -118,6 +125,13 @@ try {
     params = new URLSearchParams({ from: day, to: day });
   const run = (action, payload, id = randomUUID()) =>
     mutate(action, payload, id);
+  async function approve(id) {
+    const { movement } = await movementDetail(id);
+    return run("movement.review.approve", {
+      id,
+      reviewVersion: movement.review_version,
+    });
+  }
   const service = (
     await sourceWriter.query("SELECT id,nombre FROM public.servicios LIMIT 1")
   ).rows[0];
@@ -458,6 +472,7 @@ try {
     const detail = await movementDetail(imported.id);
     assert.equal(detail.movement.total_cents, 23200);
     assert.equal(detail.movement.source_origin, "blanca");
+    assert.equal(detail.movement.review_status, "validated");
     await assert.rejects(
       run("movement.create", {
         ...input,
@@ -873,6 +888,13 @@ try {
       ).rows.length,
       0,
     );
+    const frozen = await payoutPreview(employee.id, "day", day);
+    assert.equal(
+      frozen.commissions.some((c) => c.movement_id === saved.id),
+      false,
+    );
+    assert.ok(frozen.frozenCents >= 1160);
+    await approve(saved.id);
     const preview = await payoutPreview(employee.id, "day", day),
       commission = preview.commissions.find((c) => c.movement_id === saved.id);
     assert.ok(commission);
@@ -1089,10 +1111,10 @@ try {
         SELECT * FROM unnest($1::uuid[],$2::uuid[]) AS f(movement_id,commission_id)
       ), inserted AS (
         INSERT INTO administracion.movements
-        (id,kind,date,concept,category,contact,items,subtotal_cents,tax_cents,total_cents,method,manual_folio,manual_origin)
+        (id,kind,date,concept,category,contact,items,subtotal_cents,tax_cents,total_cents,method,manual_folio,manual_origin,review_status)
         SELECT movement_id,'entrada','2001-01-01','Comisión histórica QA','Venta manual','Público QA',
           '[{"description":"Servicio QA","quantity":1,"unitCents":1000,"totalCents":1000}]'::jsonb,
-          1000,0,1000,'efectivo','QA-BULK-'||movement_id::text,'manual' FROM fixtures
+          1000,0,1000,'efectivo','QA-BULK-'||movement_id::text,'manual','approved' FROM fixtures
         RETURNING id
       )
       INSERT INTO administracion.commissions(id,movement_id,employee_id,amount_cents,mode)
@@ -1385,6 +1407,7 @@ try {
     });
     const commissionId = (await movementDetail(accountingSale.id)).movement
       .commission_id;
+    await approve(accountingSale.id);
     await run("commission.pay", { id: commissionId, date: "2002-02-10" });
     assert.deepEqual(
       await accountingSummary("2002-01-01", "2002-01-31"),
@@ -1479,6 +1502,548 @@ try {
     assert.equal(preservedSale.payments.length, 1);
     assert.ok(preservedExpense.movement.voided_at);
     assert.equal(preservedExpense.payments.length, 1);
+  });
+  const reviewEmployee = await run("employee.save", {
+    name: "Revisión de ventas QA",
+    phone: "",
+    position: "Técnico",
+  });
+  async function reviewSale(extra = {}) {
+    return run("movement.create", {
+      ...input,
+      manual: true,
+      folio: "QA-REVISION-" + randomUUID(),
+      origin: "manual",
+      date: "2003-01-15",
+      commission: {
+        employeeId: reviewEmployee.id,
+        mode: "fixed",
+        value: "11.60",
+      },
+      ...extra,
+    });
+  }
+  async function validationPayload(id, sourceId, extra = {}) {
+    const { movement } = await movementDetail(id);
+    const [sale] = await lookupSales("LLA1:V:" + sourceId);
+    assert.ok(sale);
+    assert.match(sale.fingerprint, /^[a-f\d]{64}$/);
+    return {
+      id,
+      reviewVersion: movement.review_version,
+      sourceKind: sale.kind,
+      sourceId: sale.id,
+      sourceFingerprint: sale.fingerprint,
+      ...extra,
+    };
+  }
+  await test("manual sales start pending, remain in financial totals and appear in the global review queue", async () => {
+    const compact = await run("sale.manual.create", {
+      description: "Revisión compacta QA",
+      quantity: 1,
+      unitPrice: "50",
+      method: "efectivo",
+      contact: "",
+      commission: null,
+    });
+    const saved = await reviewSale();
+    for (const id of [saved.id, compact.id]) {
+      const { movement } = await movementDetail(id);
+      assert.equal(movement.source_id, null);
+      assert.equal(movement.review_status, "pending");
+      assert.equal(movement.review_version, 1);
+    }
+    const unrelated = new URLSearchParams({
+      from: "2099-01-01",
+      to: "2099-01-31",
+      view: "revision",
+    });
+    const queue = await getState(unrelated);
+    assert.ok(queue.reviewCount >= 2);
+    assert.equal(queue.total, queue.reviewCount);
+    assert.ok(queue.movements.some((movement) => movement.id === saved.id));
+    assert.ok(
+      queue.movements.every((movement) => movement.review_status === "pending"),
+    );
+    const count = (
+      await connection.query(
+        "SELECT count(*) FROM administracion.movements WHERE kind='entrada' AND review_status='pending' AND voided_at IS NULL",
+      )
+    ).rows[0].count;
+    assert.equal(queue.reviewCount, Number(count));
+    const state = await getState(
+      new URLSearchParams({ from: "2003-01-15", to: "2003-01-15" }),
+    );
+    assert.equal(state.summary.income, 11600);
+    assert.equal(state.summary.commissions, 1160);
+    assert.equal(state.summary.profit, 10440);
+    assert.ok(state.summary.employeeFrozen >= 1160);
+    await run("movement.void", {
+      id: saved.id,
+      reason: "Fin de revisión inicial QA",
+    });
+    const refreshed = await getState(unrelated);
+    assert.equal(refreshed.reviewCount, queue.reviewCount - 1);
+    assert.equal(
+      refreshed.movements.some((movement) => movement.id === saved.id),
+      false,
+    );
+  });
+  await test("frozen commissions cannot be paid individually, by IDs or by a settlement snapshot", async () => {
+    const saved = await reviewSale();
+    const detail = await movementDetail(saved.id);
+    const preview = await payoutPreview(reviewEmployee.id, "all", day);
+    assert.equal(preview.commissions.length, 0);
+    assert.equal(preview.totalCents, 0);
+    assert.equal(preview.frozenCents, 1160);
+    assert.equal(preview.frozenCount, 1);
+    await assert.rejects(
+      run("commission.pay", { id: detail.movement.commission_id, date: day }),
+      /revisi|congelad|aprobad/i,
+    );
+    await assert.rejects(
+      run("commission.batchPay", {
+        employeeId: reviewEmployee.id,
+        period: "all",
+        anchor: day,
+        commissionIds: [detail.movement.commission_id],
+        expectedTotalCents: 1160,
+      }),
+      /revisi|congelad|aprobad/i,
+    );
+    await assert.rejects(run("commission.batchPay", snapshotPayload(preview)));
+    assert.equal(
+      (await movementDetail(saved.id)).movement.commission_paid_on,
+      null,
+    );
+    const payload = {
+        id: saved.id,
+        reviewVersion: detail.movement.review_version,
+      },
+      request = randomUUID();
+    const approved = await run("movement.review.approve", payload, request);
+    assert.deepEqual(
+      await run("movement.review.approve", payload, request),
+      approved,
+    );
+    await assert.rejects(
+      run("movement.review.approve", payload),
+      /cambi|revisi|aprobad/i,
+    );
+    const released = await payoutPreview(reviewEmployee.id, "all", day);
+    assert.equal(released.commissions.length, 1);
+    assert.equal(released.totalCents, 1160);
+    assert.equal(released.frozenCount, 0);
+    assert.equal(released.frozenCents, 0);
+    const approvedDetail = await movementDetail(saved.id);
+    assert.equal(approvedDetail.movement.review_status, "approved");
+    assert.equal(
+      approvedDetail.movement.review_version,
+      payload.reviewVersion + 1,
+    );
+    const approvalAudit = (
+      await connection.query(
+        "SELECT details FROM administracion.audit WHERE entity_id=$1 AND action='movement.review.approve.changes'",
+        [saved.id],
+      )
+    ).rows;
+    assert.equal(approvalAudit.length, 1);
+    assert.equal(
+      approvalAudit[0].details.before.movement.review_status,
+      "pending",
+    );
+    assert.equal(
+      approvalAudit[0].details.after.movement.review_status,
+      "approved",
+    );
+    assert.equal(approvalAudit[0].details.after.commission.paid_on, null);
+    const payment = snapshotPayload(released),
+      paymentRequest = randomUUID();
+    const paid = await run("commission.batchPay", payment, paymentRequest);
+    assert.deepEqual(
+      await run("commission.batchPay", payment, paymentRequest),
+      paid,
+    );
+    await assert.rejects(
+      run("commission.pay", { id: detail.movement.commission_id, date: day }),
+      /ya está pagada/,
+    );
+    const sourceId = await ticket();
+    await assert.rejects(
+      run(
+        "movement.review.validate",
+        await validationPayload(saved.id, sourceId),
+      ),
+      /pagad|historial/i,
+    );
+    assert.equal((await movementDetail(saved.id)).movement.source_id, null);
+  });
+  await test("a failed ticket search leaves the manual sale and its frozen commission unchanged", async () => {
+    const saved = await reviewSale();
+    const before = await movementDetail(saved.id);
+    assert.deepEqual(await lookupSales("LLA1:V:no-existe-" + randomUUID()), []);
+    const after = await movementDetail(saved.id);
+    assert.deepEqual(after, before);
+    await assert.rejects(
+      run("movement.review.validate", {
+        id: saved.id,
+        reviewVersion: before.movement.review_version,
+        sourceKind: "ventas",
+        sourceId: "no-existe-" + randomUUID(),
+        sourceFingerprint: "0".repeat(64),
+      }),
+      /encontr|disponible|existe/i,
+    );
+    assert.deepEqual(await movementDetail(saved.id), before);
+    await run("movement.void", {
+      id: saved.id,
+      reason: "Fin de búsqueda inexistente QA",
+    });
+  });
+  await test("ticket validation replaces real totals, VAT, items, contact and full payment without losing duplicate aliases", async () => {
+    const folio = "QA-ALIAS-" + randomUUID();
+    const retiredSourceId = "admin-qa-" + randomUUID();
+    const saved = await reviewSale({
+      folio,
+      manualTicketCode: "LLA1:V:" + retiredSourceId,
+    });
+    const before = await movementDetail(saved.id);
+    const sourceId = await ticket("blanca");
+    const payload = await validationPayload(saved.id, sourceId),
+      request = randomUUID();
+    const validated = await run("movement.review.validate", payload, request);
+    assert.deepEqual(
+      await run("movement.review.validate", payload, request),
+      validated,
+    );
+    const detail = await movementDetail(saved.id);
+    assert.equal(detail.movement.review_status, "validated");
+    assert.equal(detail.movement.review_version, payload.reviewVersion + 1);
+    assert.equal(detail.movement.source_kind, "ventas");
+    assert.equal(detail.movement.source_id, sourceId);
+    assert.equal(detail.movement.source_origin, "blanca");
+    assert.equal(detail.movement.date, day);
+    assert.equal(detail.movement.contact, "Cliente ticket QA");
+    assert.equal(detail.movement.method, "efectivo");
+    assert.equal(detail.movement.subtotal_cents, 20000);
+    assert.equal(detail.movement.tax_cents, 3200);
+    assert.equal(detail.movement.total_cents, 23200);
+    assert.equal(detail.movement.paid_cents, 23200);
+    assert.equal(detail.movement.items.length, 1);
+    assert.equal(
+      detail.movement.items[0].description,
+      "Servicio de integración",
+    );
+    assert.equal(detail.movement.items[0].unitCents, 23200);
+    assert.equal(detail.movement.items[0].totalCents, 23200);
+    assert.equal(
+      detail.movement.commission_cents,
+      before.movement.commission_cents,
+    );
+    assert.equal(detail.payments.length, 1);
+    assert.equal(detail.payments[0].id, before.payments[0].id);
+    assert.equal(detail.payments[0].amount_cents, 23200);
+    const changes = (
+      await connection.query(
+        "SELECT details FROM administracion.audit WHERE entity_id=$1 AND action='movement.review.validate.changes'",
+        [saved.id],
+      )
+    ).rows;
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0].details.before.movement.manual_folio, folio);
+    assert.equal(Number(changes[0].details.before.movement.total_cents), 11600);
+    assert.equal(Number(changes[0].details.after.movement.total_cents), 23200);
+    assert.equal(
+      changes[0].details.before.payments[0].id,
+      changes[0].details.after.payments[0].id,
+    );
+    assert.equal(
+      (await lookupSales("LLA1:V:" + sourceId))[0].registeredId,
+      saved.id,
+    );
+    await assert.rejects(
+      run("movement.review.validate", payload),
+      /cambi|valid|revisi/i,
+    );
+    await assert.rejects(
+      run("movement.create", {
+        ...input,
+        source: { kind: "ventas", id: sourceId },
+        useTicketData: true,
+        received: "232.00",
+      }),
+      /ya está registrado/,
+    );
+    await assert.rejects(reviewSale({ folio }), /ya está registrado/);
+    await ticket("negra", { id: retiredSourceId });
+    assert.equal(
+      (await lookupSales("LLA1:V:" + retiredSourceId))[0].registeredId,
+      saved.id,
+    );
+    await assert.rejects(
+      run("movement.create", {
+        ...input,
+        source: { kind: "ventas", id: retiredSourceId },
+        useTicketData: true,
+        received: "232.00",
+      }),
+      /ya está registrado/,
+    );
+    await assert.rejects(
+      run("movement.review.approve", {
+        id: saved.id,
+        reviewVersion: detail.movement.review_version,
+      }),
+      /valid|revisi|aprobad/i,
+    );
+  });
+  await test("changed, cancelled or already registered source tickets are rejected atomically during review", async () => {
+    const saved = await reviewSale();
+    const sourceId = await ticket();
+    const payload = await validationPayload(saved.id, sourceId);
+    const before = await movementDetail(saved.id);
+    await sourceWriter.query(
+      "UPDATE public.ventas SET cliente=$2::jsonb WHERE id=$1",
+      [sourceId, JSON.stringify({ nombre: "Cliente cambió QA" })],
+    );
+    await assert.rejects(
+      run("movement.review.validate", payload),
+      /cambi|revis/i,
+    );
+    assert.deepEqual(await movementDetail(saved.id), before);
+    const changed = await validationPayload(saved.id, sourceId);
+    assert.notEqual(changed.sourceFingerprint, payload.sourceFingerprint);
+    await sourceWriter.query(
+      "UPDATE public.ventas SET cancelada=true WHERE id=$1",
+      [sourceId],
+    );
+    await assert.rejects(
+      run(
+        "movement.review.validate",
+        await validationPayload(saved.id, sourceId),
+      ),
+      /cancelad/i,
+    );
+    assert.deepEqual(await movementDetail(saved.id), before);
+    const registeredId = await ticket();
+    await run("movement.create", {
+      ...input,
+      source: { kind: "ventas", id: registeredId },
+      useTicketData: true,
+      received: "232.00",
+      commission: null,
+    });
+    await assert.rejects(
+      run(
+        "movement.review.validate",
+        await validationPayload(saved.id, registeredId),
+      ),
+      /ya está registrado/,
+    );
+    assert.deepEqual(await movementDetail(saved.id), before);
+    await run("movement.void", {
+      id: saved.id,
+      reason: "Fin de validaciones atómicas QA",
+    });
+  });
+  await test("a commission above the real ticket total needs an explicit valid correction before validation", async () => {
+    const saved = await reviewSale({
+      items: [
+        {
+          description: "Captura por confirmar QA",
+          quantity: 1,
+          unitPrice: "500.00",
+        },
+      ],
+      received: "500.00",
+      commission: {
+        employeeId: reviewEmployee.id,
+        mode: "fixed",
+        value: "300.00",
+      },
+    });
+    const sourceId = await ticket(),
+      payload = await validationPayload(saved.id, sourceId);
+    const before = await movementDetail(saved.id);
+    for (const extra of [
+      {},
+      { commissionValue: "232.01" },
+      { commissionValue: "0" },
+    ]) {
+      await assert.rejects(
+        run("movement.review.validate", { ...payload, ...extra }),
+        /comisi|importe|mayor|super/i,
+      );
+      assert.deepEqual(await movementDetail(saved.id), before);
+    }
+    await run("movement.review.validate", {
+      ...payload,
+      commissionValue: "23.20",
+    });
+    const detail = await movementDetail(saved.id);
+    assert.equal(detail.movement.total_cents, 23200);
+    assert.equal(detail.movement.commission_cents, 2320);
+    assert.equal(detail.movement.employee_id, reviewEmployee.id);
+    assert.equal(detail.movement.review_status, "validated");
+  });
+  await test("concurrent approval and ticket validation accept only one reviewed version and never pay twice", async () => {
+    const saved = await reviewSale();
+    const sourceId = await ticket(),
+      validation = await validationPayload(saved.id, sourceId);
+    const results = await Promise.allSettled([
+      run("movement.review.approve", {
+        id: saved.id,
+        reviewVersion: validation.reviewVersion,
+      }),
+      run("movement.review.validate", validation),
+    ]);
+    assert.equal(
+      results.filter((result) => result.status === "fulfilled").length,
+      1,
+    );
+    const { movement } = await movementDetail(saved.id);
+    assert.equal(movement.review_version, validation.reviewVersion + 1);
+    assert.ok(["approved", "validated"].includes(movement.review_status));
+    assert.equal(
+      movement.total_cents,
+      movement.review_status === "validated" ? 23200 : 11600,
+    );
+    const payouts = await Promise.allSettled([
+      run("commission.pay", { id: movement.commission_id, date: day }),
+      run("commission.pay", { id: movement.commission_id, date: day }),
+    ]);
+    assert.equal(
+      payouts.filter((result) => result.status === "fulfilled").length,
+      1,
+    );
+    const after = await movementDetail(saved.id);
+    assert.equal(after.movement.commission_paid_on, day);
+    assert.equal(after.payments.length, 1);
+    await assert.rejects(
+      run(
+        "movement.review.validate",
+        await validationPayload(saved.id, sourceId),
+      ),
+      /pagad|historial|valid|revisi/i,
+    );
+    assert.deepEqual(await movementDetail(saved.id), after);
+  });
+  await test("approval invalidates an earlier payout snapshot and a simultaneous payout cannot bypass a frozen sale", async () => {
+    const raceEmployee = await run("employee.save", {
+      name: "Carrera aprobación QA",
+      phone: "",
+      position: "Técnico",
+    });
+    const saved = await reviewSale({
+      commission: { employeeId: raceEmployee.id, value: "11.60" },
+    });
+    const { movement } = await movementDetail(saved.id);
+    const frozen = await payoutPreview(raceEmployee.id, "all", day);
+    assert.equal(frozen.totalCents, 0);
+    const race = await Promise.allSettled([
+      run("movement.review.approve", {
+        id: saved.id,
+        reviewVersion: movement.review_version,
+      }),
+      run("commission.pay", { id: movement.commission_id, date: day }),
+    ]);
+    assert.equal(race[0].status, "fulfilled");
+    const after = await movementDetail(saved.id);
+    assert.equal(after.movement.review_status, "approved");
+    if (race[1].status === "fulfilled") {
+      assert.equal(after.movement.commission_paid_on, day);
+      await assert.rejects(
+        run("commission.pay", { id: movement.commission_id, date: day }),
+        /ya está pagada/,
+      );
+    } else {
+      assert.equal(after.movement.commission_paid_on, null);
+      const released = await payoutPreview(raceEmployee.id, "all", day);
+      assert.equal(released.totalCents, 1160);
+      assert.notEqual(released.snapshot, frozen.snapshot);
+      await assert.rejects(
+        run("commission.batchPay", {
+          ...snapshotPayload(frozen),
+          expectedTotalCents: 1160,
+        }),
+        /cambi|revis/i,
+      );
+      await run("commission.batchPay", snapshotPayload(released));
+    }
+  });
+  await test("reconciling a manual sale against a simultaneous scan preserves one source identity without a database deadlock", async () => {
+    const saved = await reviewSale();
+    const sourceId = await ticket(),
+      payload = await validationPayload(saved.id, sourceId);
+    const results = await Promise.allSettled([
+      run("movement.review.validate", payload),
+      run("movement.create", {
+        ...input,
+        source: { kind: "ventas", id: sourceId },
+        useTicketData: true,
+        received: "232.00",
+        commission: { employeeId: reviewEmployee.id, value: "11.60" },
+      }),
+    ]);
+    assert.equal(
+      results.filter((result) => result.status === "fulfilled").length,
+      1,
+    );
+    for (const result of results) {
+      if (result.status === "rejected") {
+        assert.notEqual(result.reason.code, "40P01");
+        assert.match(result.reason.message, /registrad|cambi/i);
+      }
+    }
+    const canonical = await connection.query(
+      "SELECT id FROM administracion.movements WHERE source_kind='ventas' AND source_id=$1",
+      [sourceId],
+    );
+    assert.equal(canonical.rows.length, 1);
+    const detail = await movementDetail(canonical.rows[0].id);
+    assert.equal(detail.movement.review_status, "validated");
+    assert.equal(detail.movement.commission_cents, 1160);
+    assert.equal(detail.movement.commission_paid_on, null);
+    if (canonical.rows[0].id !== saved.id)
+      assert.equal(
+        (await movementDetail(saved.id)).movement.review_status,
+        "pending",
+      );
+  });
+  await test("review migration replay preserves approved historical payouts and never reopens a paid commission", async () => {
+    const saved = await reviewSale();
+    const { movement } = await movementDetail(saved.id);
+    // This clone-only fixture represents a manual commission paid before review existed.
+    await connection.query(
+      "UPDATE administracion.commissions SET paid_on=$2 WHERE id=$1",
+      [movement.commission_id, day],
+    );
+    const sourceId = await ticket();
+    await assert.rejects(
+      run(
+        "movement.review.validate",
+        await validationPayload(saved.id, sourceId),
+      ),
+      /pagad|historial/i,
+    );
+    await approve(saved.id);
+    const before = await movementDetail(saved.id);
+    assert.equal(before.movement.review_status, "approved");
+    assert.equal(before.movement.commission_paid_on, day);
+    await migrator.query(
+      await fs.readFile(
+        new URL("../database/007-sale-review.sql", import.meta.url),
+        "utf8",
+      ),
+    );
+    await migrator.query(
+      `GRANT SELECT ON administracion.manual_ledger TO "${writerRole}"`,
+    );
+    assert.deepEqual(await movementDetail(saved.id), before);
+    await assert.rejects(
+      run("commission.pay", { id: movement.commission_id, date: day }),
+      /ya está pagada/,
+    );
   });
   if (process.argv.includes("--keep")) {
     await fs.mkdir(new URL("../.local/", import.meta.url), { recursive: true });

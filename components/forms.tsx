@@ -10,6 +10,8 @@ import {
   BadgeDollarSign,
   Wallet,
   ReceiptText,
+  ClipboardCheck,
+  LockKeyhole,
 } from "lucide-react";
 import type {
   Employee,
@@ -881,7 +883,15 @@ export function MovementForm({
   );
 }
 
-export function TicketLookup({ onSelect }: { onSelect: (sale: Sale) => void }) {
+export function TicketLookup({
+  onSelect,
+  allowedMovementId,
+  compact = false,
+}: {
+  onSelect: (sale: Sale) => void;
+  allowedMovementId?: string;
+  compact?: boolean;
+}) {
   const inputRef = useRef<HTMLInputElement>(null),
     inFlight = useRef(false);
   const [focused, setFocused] = useState(false);
@@ -909,7 +919,8 @@ export function TicketLookup({ onSelect }: { onSelect: (sale: Sale) => void }) {
       if (
         result.sales.length === 1 &&
         !result.sales[0].cancelled &&
-        !result.sales[0].registeredId
+        (!result.sales[0].registeredId ||
+          result.sales[0].registeredId === allowedMovementId)
       )
         onSelect(result.sales[0]);
     } catch (error) {
@@ -922,28 +933,32 @@ export function TicketLookup({ onSelect }: { onSelect: (sale: Sale) => void }) {
     }
   }
   return (
-    <div className="modal-body form-stack">
-      <div className={"scanner-stage " + (focused ? "armed" : "")}>
-        <ScanLine size={52} strokeWidth={1.6} />
-        <strong>
-          {busy
-            ? "Buscando ticket…"
-            : focused
-              ? "Listo para escanear"
-              : "Activar lector"}
-        </strong>
-        <span>Escanea el código o escribe el folio</span>
-        {!focused && (
-          <button
-            type="button"
-            className="button secondary"
-            onClick={() => inputRef.current?.focus()}
-          >
-            <Focus size={20} />
-            Activar
-          </button>
-        )}
-      </div>
+    <div
+      className={compact ? "review-lookup form-stack" : "modal-body form-stack"}
+    >
+      {!compact && (
+        <div className={"scanner-stage " + (focused ? "armed" : "")}>
+          <ScanLine size={52} strokeWidth={1.6} />
+          <strong>
+            {busy
+              ? "Buscando ticket…"
+              : focused
+                ? "Listo para escanear"
+                : "Activar lector"}
+          </strong>
+          <span>Escanea el código o escribe el folio</span>
+          {!focused && (
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => inputRef.current?.focus()}
+            >
+              <Focus size={20} />
+              Activar
+            </button>
+          )}
+        </div>
+      )}
       <form
         onSubmit={(event) => {
           event.preventDefault();
@@ -1003,7 +1018,10 @@ export function TicketLookup({ onSelect }: { onSelect: (sale: Sale) => void }) {
             <button
               key={sale.kind + sale.id}
               className="ticket-result"
-              disabled={sale.cancelled || !!sale.registeredId}
+              disabled={
+                sale.cancelled ||
+                (!!sale.registeredId && sale.registeredId !== allowedMovementId)
+              }
               onClick={() => onSelect(sale)}
             >
               <div>
@@ -1015,7 +1033,8 @@ export function TicketLookup({ onSelect }: { onSelect: (sale: Sale) => void }) {
                 <span className="hint">
                   {sale.cancelled
                     ? "Ticket cancelado"
-                    : sale.registeredId
+                    : sale.registeredId &&
+                        sale.registeredId !== allowedMovementId
                       ? "Ya registrado en Administración"
                       : "Cargar y revisar"}
                 </span>
@@ -1025,6 +1044,288 @@ export function TicketLookup({ onSelect }: { onSelect: (sale: Sale) => void }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+export function SaleReviewForm({
+  movement,
+  write,
+  onDone,
+  onClose,
+}: {
+  movement: Movement;
+  write: Write;
+  onDone: () => void;
+  onClose: () => void;
+}) {
+  const [source, setSource] = useState<Sale | null>(null),
+    [manualApproval, setManualApproval] = useState(false),
+    [confirmed, setConfirmed] = useState(false),
+    [commissionValue, setCommissionValue] = useState("");
+  const reviewHeadingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (source || manualApproval) reviewHeadingRef.current?.focus();
+  }, [source, manualApproval]);
+  const { busy, error, submit } = useSubmit(write, onDone);
+  const correctionRequired =
+    !!source &&
+    !!movement.commission_id &&
+    (movement.commission_cents || 0) > source.totalCents;
+  let correctedCents = 0;
+  try {
+    correctedCents = cents(commissionValue, "Comisión");
+  } catch {
+    /* Incomplete input is checked before confirmation. */
+  }
+  const validCorrection =
+    !correctionRequired ||
+    (correctedCents > 0 && correctedCents <= source!.totalCents);
+  const canLink = !movement.commission_paid_on;
+  function reset() {
+    setSource(null);
+    setManualApproval(false);
+    setConfirmed(false);
+    setCommissionValue("");
+  }
+  return (
+    <div className="sale-review">
+      <div className="modal-body form-stack">
+        <div className="review-record">
+          <div>
+            <span
+              className={
+                "pill " +
+                (movement.review_status === "pending"
+                  ? "review-pill"
+                  : "manual-approved")
+              }
+            >
+              {movement.review_status === "pending"
+                ? "Requiere revisión"
+                : "Manual aprobada"}
+            </span>
+            <strong>{movement.concept}</strong>
+            <small>
+              Referencia interna: {movement.reference || movement.manual_folio}
+            </small>
+            <small>Sin folio validado · {shortDate(movement.date)}</small>
+          </div>
+          <strong className="number">{money(movement.total_cents)}</strong>
+        </div>
+        {movement.review_status === "pending" &&
+          movement.commission_id &&
+          !movement.commission_paid_on && (
+            <div className="review-commission-note">
+              <LockKeyhole size={18} />
+              Comisión congelada: {money(movement.commission_cents || 0)} ·{" "}
+              {movement.employee_name}
+            </div>
+          )}
+        {!source && !manualApproval && (
+          <>
+            {canLink ? (
+              <TicketLookup
+                compact
+                allowedMovementId={movement.id}
+                onSelect={(sale) => {
+                  setSource(sale);
+                  setConfirmed(false);
+                }}
+              />
+            ) : (
+              <p className="warning">
+                La comisión ya fue pagada. No se puede reemplazar esta venta.
+              </p>
+            )}
+            {movement.review_status === "pending" && (
+              <div className="manual-approval-option">
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setManualApproval(true)}
+                >
+                  Aprobar sin ticket
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {source && (
+          <>
+            <div className="review-source-heading">
+              <div>
+                <span className="eyebrow">TICKET ENCONTRADO</span>
+                <h3 ref={reviewHeadingRef} tabIndex={-1}>
+                  {source.folio}
+                </h3>
+                <p>
+                  {source.contact} · {shortDate(source.date)}
+                </p>
+                <small>
+                  Sistema {source.origin === "blanca" ? "blanco" : "negro"} ·{" "}
+                  {source.method}
+                </small>
+              </div>
+              <button
+                className="text-button"
+                type="button"
+                onClick={reset}
+                disabled={busy}
+              >
+                Buscar otro
+              </button>
+            </div>
+            <div className="review-comparison">
+              <div>
+                <span>Total manual</span>
+                <strong className="number">
+                  {money(movement.total_cents)}
+                </strong>
+              </div>
+              <div>
+                <span>Total del ticket</span>
+                <strong className="number">{money(source.totalCents)}</strong>
+              </div>
+            </div>
+            <SaleBreakdown
+              items={source.items}
+              subtotal={source.subtotalCents}
+              tax={source.taxCents}
+              total={source.totalCents}
+            />
+            <p className="review-replacement-note">
+              Al confirmar, los datos del ticket reemplazan esta venta manual.
+            </p>
+          </>
+        )}
+        {manualApproval && (
+          <>
+            <div className="review-source-heading">
+              <h3 ref={reviewHeadingRef} tabIndex={-1}>
+                Aprobar sin ticket
+              </h3>
+              <button
+                className="text-button"
+                type="button"
+                onClick={reset}
+                disabled={busy}
+              >
+                Buscar ticket
+              </button>
+            </div>
+            <SaleBreakdown
+              items={movement.items}
+              subtotal={movement.subtotal_cents}
+              tax={movement.tax_cents}
+              total={movement.total_cents}
+            />
+            <p className="review-replacement-note">
+              Conserva los datos manuales y queda sin folio validado.
+            </p>
+          </>
+        )}
+        {(source || manualApproval) && (
+          <form
+            id="sale-review-confirm"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!confirmed || !validCorrection) return;
+              void submit(
+                source ? "movement.review.validate" : "movement.review.approve",
+                {
+                  id: movement.id,
+                  reviewVersion: movement.review_version,
+                  ...(source
+                    ? {
+                        sourceKind: source.kind,
+                        sourceId: source.id,
+                        sourceFingerprint: source.fingerprint,
+                        ...(correctionRequired ? { commissionValue } : {}),
+                      }
+                    : {}),
+                },
+              );
+            }}
+          >
+            <fieldset className="form-stack" disabled={busy}>
+              {movement.commission_id && (
+                <div className="review-commission-confirm">
+                  <strong>Comisión · {movement.employee_name}</strong>
+                  {correctionRequired ? (
+                    <label>
+                      Nuevo monto de comisión
+                      <input
+                        value={commissionValue}
+                        onChange={(event) =>
+                          setCommissionValue(event.target.value)
+                        }
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        required
+                        aria-invalid={!!commissionValue && !validCorrection}
+                      />
+                      <small>
+                        Máximo {money(source!.totalCents)}. La comisión actual
+                        supera el ticket.
+                      </small>
+                    </label>
+                  ) : (
+                    <span className="number">
+                      {money(movement.commission_cents || 0)}
+                    </span>
+                  )}
+                </div>
+              )}
+              <label className="check-label review-confirmation">
+                <input
+                  type="checkbox"
+                  checked={confirmed}
+                  onChange={(event) => setConfirmed(event.target.checked)}
+                  required
+                />
+                <span>
+                  {source
+                    ? "Confirmo los datos del ticket"
+                    : "Confirmo esta venta manual"}
+                  {movement.commission_id && !movement.commission_paid_on
+                    ? " y autorizo su comisión."
+                    : "."}
+                </span>
+              </label>
+            </fieldset>
+          </form>
+        )}
+        {error && (
+          <div className="error" role="alert">
+            {error}
+          </div>
+        )}
+      </div>
+      <footer className="modal-footer">
+        <button
+          type="button"
+          className="button secondary"
+          disabled={busy}
+          onClick={onClose}
+        >
+          Cancelar
+        </button>
+        {(source || manualApproval) && (
+          <button
+            className="button primary"
+            form="sale-review-confirm"
+            disabled={busy || !confirmed || !validCorrection}
+          >
+            <ClipboardCheck size={19} />
+            {busy
+              ? "Guardando…"
+              : source
+                ? "Validar y actualizar"
+                : "Aprobar venta manual"}
+          </button>
+        )}
+      </footer>
     </div>
   );
 }
@@ -1360,11 +1661,22 @@ export function PayoutForm({
                 {loading ? "…" : money(current?.totalCents || 0)}
               </strong>
               <small>
-                {current?.commissions.length || 0} comisiones pendientes
+                {current?.commissions.length || 0}{" "}
+                {current?.commissions.length === 1
+                  ? "comisión lista para pagar"
+                  : "comisiones listas para pagar"}
               </small>
             </div>
           </div>
           {loading && <p role="status">Consultando comisiones…</p>}
+          {!!current?.frozenCount && (
+            <div className="review-commission-note">
+              <LockKeyhole size={18} />
+              {current.frozenCount}{" "}
+              {current.frozenCount === 1 ? "congelada" : "congeladas"} ·{" "}
+              {money(current.frozenCents)}. Revisa sus ventas para liberarlas.
+            </div>
+          )}
           {current && (
             <div className="payout-lines">
               {current.commissions.map((c) => (
@@ -1377,7 +1689,11 @@ export function PayoutForm({
                 </div>
               ))}
               {!current.commissions.length && (
-                <div className="empty compact">Todo pagado en este periodo</div>
+                <div className="empty compact">
+                  {current.frozenCount
+                    ? "Sin comisiones liberadas para pagar"
+                    : "Sin comisiones pendientes en este periodo"}
+                </div>
               )}
             </div>
           )}
@@ -1468,15 +1784,44 @@ export function DetailView({
   payments,
   onPayment,
   onVoid,
+  onReview,
 }: {
   movement: Movement;
   payments: Payment[];
   onPayment: () => void;
   onVoid: () => void;
+  onReview: () => void;
 }) {
   const inactive = movement.source_cancelled || !!movement.voided_at;
   return (
     <div className="modal-body form-stack">
+      {!inactive && movement.kind === "entrada" && !movement.source_id && (
+        <div className="review-detail-banner">
+          <div>
+            <strong>
+              {movement.review_status === "pending"
+                ? "Requiere revisión"
+                : "Manual aprobada"}
+            </strong>
+            <span>
+              Sin folio validado
+              {movement.review_status === "pending" &&
+              movement.commission_id &&
+              !movement.commission_paid_on
+                ? " · Comisión congelada"
+                : ""}
+            </span>
+          </div>
+          {(movement.review_status === "pending" ||
+            !movement.commission_paid_on) && (
+            <button className="button secondary small" onClick={onReview}>
+              {movement.review_status === "pending"
+                ? "Revisar venta"
+                : "Vincular ticket"}
+            </button>
+          )}
+        </div>
+      )}
       {inactive && (
         <div className="warning">
           {movement.voided_at
@@ -1497,12 +1842,16 @@ export function DetailView({
       </div>
       <dl className="detail-grid">
         <div>
-          <dt>Origen</dt>
+          <dt>
+            {movement.kind === "entrada" && !movement.source_id
+              ? "Registro"
+              : "Origen"}
+          </dt>
           <dd>
             {movement.source_folio
               ? `${movement.source_folio} · Sistema ${movement.source_origin === "blanca" ? "blanco" : "negro"}`
-              : movement.manual_folio
-                ? `${movement.manual_folio} · Registro manual${movement.manual_origin === "manual" ? "" : " · Sistema " + (movement.manual_origin === "blanca" ? "blanco" : "negro")}`
+              : movement.kind === "entrada"
+                ? "Manual · Sin folio validado"
                 : "Registro manual"}
           </dd>
         </div>
@@ -1511,7 +1860,11 @@ export function DetailView({
           <dd>{movement.category}</dd>
         </div>
         <div>
-          <dt>Referencia</dt>
+          <dt>
+            {movement.kind === "entrada" && !movement.source_id
+              ? "Referencia interna"
+              : "Referencia"}
+          </dt>
           <dd>{movement.reference || "Sin referencia"}</dd>
         </div>
         <div>
@@ -1557,7 +1910,9 @@ export function DetailView({
             {money(movement.commission_cents || 0)} ·{" "}
             {movement.commission_paid_on
               ? `Pagada ${shortDate(movement.commission_paid_on)}`
-              : "Pendiente de pago"}
+              : movement.review_status === "pending"
+                ? "Congelada · Requiere revisión"
+                : "Pendiente de pago"}
           </span>
         </div>
       )}
