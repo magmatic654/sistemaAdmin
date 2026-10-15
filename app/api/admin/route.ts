@@ -41,6 +41,8 @@ export async function GET(request: Request) {
           params.get("employeeId") || "",
           params.get("period") || "",
           params.get("anchor") || "",
+          params.get("from") || undefined,
+          params.get("to") || undefined,
         ),
         { headers },
       );

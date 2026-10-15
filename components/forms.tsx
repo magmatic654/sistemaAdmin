@@ -7,7 +7,7 @@ import {
   Check,
   ArrowRight,
   Focus,
-  BadgePercent,
+  BadgeDollarSign,
   Wallet,
   ReceiptText,
 } from "lucide-react";
@@ -19,9 +19,16 @@ import type {
   Payment,
   PayoutPreview,
 } from "@/lib/types";
-import { businessToday, commissionAmount, periodRange } from "@/lib/domain";
+import {
+  businessToday,
+  cents,
+  periodRange,
+  type Line,
+  type PeriodSelection,
+} from "@/lib/domain";
 import { scanValue, isScanTerminator } from "@/lib/scanner";
 import { DatePicker, Select, money, shortDate } from "./ui";
+import PeriodControls from "./PeriodControls";
 
 export const methodOptions = [
   { value: "efectivo", label: "Efectivo" },
@@ -100,30 +107,24 @@ export function CommissionFields({
   employees,
   value,
   onChange,
-  defaultRateBps = null,
   total = 0,
 }: {
   employees: Employee[];
   value: {
     employeeId: string;
-    mode: string;
     value: string;
-    rememberRate?: boolean;
   } | null;
-  defaultRateBps?: number | null;
   total?: number;
   onChange: (
     value: {
       employeeId: string;
-      mode: string;
       value: string;
-      rememberRate?: boolean;
     } | null,
   ) => void;
 }) {
   let amount = 0;
   try {
-    if (value) amount = commissionAmount(total, value.mode, value.value);
+    if (value) amount = cents(value.value, "Comisión");
   } catch {
     /* Incomplete input while typing. */
   }
@@ -132,7 +133,7 @@ export function CommissionFields({
       <label className="switch-label">
         <span>
           <strong>
-            <BadgePercent size={22} /> Comisión de esta venta
+            <BadgeDollarSign size={22} /> Comisión de esta venta
           </strong>
         </span>
         <input
@@ -144,8 +145,7 @@ export function CommissionFields({
               event.target.checked
                 ? {
                     employeeId: "",
-                    mode: "percent",
-                    value: defaultRateBps ? String(defaultRateBps / 100) : "",
+                    value: "",
                   }
                 : null,
             )
@@ -165,54 +165,27 @@ export function CommissionFields({
             ]}
             onChange={(employeeId) => onChange({ ...value, employeeId })}
           />
-          <div className="form-grid">
-            <Select
-              label="Tipo"
-              value={value.mode}
-              options={[
-                { value: "fixed", label: "Monto fijo" },
-                { value: "percent", label: "Porcentaje" },
-              ]}
-              onChange={(mode) =>
-                onChange({
-                  ...value,
-                  mode,
-                  rememberRate: mode === "percent" && value.rememberRate,
-                })
+          <label>
+            Monto de comisión
+            <input
+              inputMode="decimal"
+              value={value.value}
+              onChange={(event) =>
+                onChange({ ...value, value: event.target.value })
               }
+              placeholder="0.00"
+              required
+              aria-invalid={amount > total || undefined}
             />
-            <label>
-              {value.mode === "percent" ? "Porcentaje (%)" : "Comisión ($)"}
-              <input
-                inputMode="decimal"
-                value={value.value}
-                onChange={(event) =>
-                  onChange({ ...value, value: event.target.value })
-                }
-                placeholder="0.00"
-                required
-              />
-            </label>
-          </div>
+          </label>
           {!employees.some((e) => e.active) && (
             <p className="hint wide">Agrega un empleado primero.</p>
           )}
-          {value.mode === "percent" && (
-            <label className="check-label wide">
-              <input
-                type="checkbox"
-                checked={!!value.rememberRate}
-                onChange={(event) =>
-                  onChange({ ...value, rememberRate: event.target.checked })
-                }
-              />
-              Usar este % en próximas ventas
-            </label>
+          {amount > total && (
+            <p className="error wide" role="alert">
+              La comisión no puede superar {money(total)}.
+            </p>
           )}
-          <div className="commission-calculation wide">
-            <span>Comisión a pagar</span>
-            <strong className="number">{money(amount)}</strong>
-          </div>
         </div>
       )}
     </div>
@@ -221,13 +194,11 @@ export function CommissionFields({
 
 export function ManualSaleForm({
   employees,
-  defaultRateBps,
   write,
   onDone,
   onClose,
 }: {
   employees: Employee[];
-  defaultRateBps: number | null;
   write: Write;
   onDone: () => void;
   onClose: () => void;
@@ -239,8 +210,7 @@ export function ManualSaleForm({
     [contact, setContact] = useState("Público general");
   const [withCommission, setWithCommission] = useState(false),
     [employeeId, setEmployeeId] = useState(""),
-    [customAmount, setCustomAmount] = useState<string | null>(null);
-  const [suggestedRateBps] = useState(defaultRateBps);
+    [amount, setAmount] = useState("");
   const estimate =
     Math.round((Number(unitPrice) || 0) * 100) * (Number(quantity) || 0);
   const total =
@@ -249,11 +219,13 @@ export function ManualSaleForm({
     estimate <= 99_999_999_999
       ? estimate
       : null;
-  const amount =
-    customAmount ??
-    (suggestedRateBps && total !== null && total > 0
-      ? (Math.round((total * suggestedRateBps) / 10000) / 100).toFixed(2)
-      : "");
+  let commissionExceedsTotal = false;
+  try {
+    commissionExceedsTotal =
+      withCommission && total !== null && cents(amount, "Comisión") > total;
+  } catch {
+    /* Validate complete values on save. */
+  }
   const activeEmployees = employees.filter((employee) => employee.active);
   const { busy, error, submit } = useSubmit(write, onDone);
   function save(event: FormEvent) {
@@ -267,12 +239,7 @@ export function ManualSaleForm({
       commission: withCommission
         ? {
             employeeId,
-            mode:
-              customAmount === null && suggestedRateBps ? "percent" : "fixed",
-            value:
-              customAmount === null && suggestedRateBps
-                ? String(suggestedRateBps / 100)
-                : amount,
+            value: amount,
           }
         : null,
     });
@@ -342,7 +309,7 @@ export function ManualSaleForm({
           <section className="manual-sale-commission">
             <label className="manual-sale-switch">
               <span>
-                <BadgePercent size={22} />
+                <BadgeDollarSign size={22} />
                 <strong>Agregar comisión</strong>
               </span>
               <input
@@ -376,9 +343,10 @@ export function ManualSaleForm({
                   <input
                     inputMode="decimal"
                     value={amount}
-                    onChange={(event) => setCustomAmount(event.target.value)}
+                    onChange={(event) => setAmount(event.target.value)}
                     placeholder="$0.00"
                     required
+                    aria-invalid={commissionExceedsTotal || undefined}
                   />
                 </label>
               </div>
@@ -390,20 +358,76 @@ export function ManualSaleForm({
               {total === null ? "—" : money(total)}
             </strong>
           </div>
-          {error && (
+          {(error || commissionExceedsTotal) && (
             <div className="manual-sale-error" role="alert">
-              {error}
+              {error || "La comisión no puede superar el total de la venta."}
             </div>
           )}
         </fieldset>
       </div>
       <Footer
         busy={busy}
-        submitDisabled={total === null}
+        submitDisabled={total === null || commissionExceedsTotal}
         onClose={onClose}
         label="Guardar venta"
       />
     </form>
+  );
+}
+
+function SaleBreakdown({
+  items,
+  subtotal,
+  tax,
+  total,
+}: {
+  items: Line[];
+  subtotal: number;
+  tax: number;
+  total: number;
+}) {
+  const itemAmountLabel =
+    tax > 0 && items.reduce((sum, item) => sum + item.totalCents, 0) === total
+      ? "Importe con IVA"
+      : "Importe";
+  return (
+    <section className="sale-breakdown" aria-label="Artículos e importes">
+      <div className="sale-breakdown-items">
+        {items.map((item, index) => (
+          <article className="sale-breakdown-item" key={index}>
+            <h4>{item.description}</h4>
+            <dl>
+              <div>
+                <dt>Cantidad</dt>
+                <dd className="number">{item.quantity}</dd>
+              </div>
+              <div>
+                <dt>Precio por unidad</dt>
+                <dd className="number">{money(item.unitCents)}</dd>
+              </div>
+              <div>
+                <dt>{itemAmountLabel}</dt>
+                <dd className="number">{money(item.totalCents)}</dd>
+              </div>
+            </dl>
+          </article>
+        ))}
+      </div>
+      <dl className="sale-breakdown-totals">
+        <div>
+          <dt>Subtotal</dt>
+          <dd className="number">{money(subtotal)}</dd>
+        </div>
+        <div>
+          <dt>IVA</dt>
+          <dd className="number">{money(tax)}</dd>
+        </div>
+        <div className="sale-breakdown-total">
+          <dt>Total</dt>
+          <dd className="number">{money(total)}</dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 
@@ -413,7 +437,6 @@ export function MovementForm({
   employees,
   suppliers,
   providerNames,
-  defaultRateBps,
   write,
   onDone,
   onClose,
@@ -423,7 +446,6 @@ export function MovementForm({
   employees: Employee[];
   suppliers: Supplier[];
   providerNames: string[];
-  defaultRateBps: number | null;
   write: Write;
   onDone: () => void;
   onClose: () => void;
@@ -453,9 +475,7 @@ export function MovementForm({
   const [manualOrigin, setManualOrigin] = useState("manual");
   const [commission, setCommission] = useState<{
     employeeId: string;
-    mode: string;
     value: string;
-    rememberRate?: boolean;
   } | null>(null);
   const { busy, error, submit } = useSubmit(write, onDone);
   const total =
@@ -611,10 +631,6 @@ export function MovementForm({
           {source && (
             <div className="ticket-customer">
               <span>{source.phone || "Sin teléfono"}</span>
-              <span>
-                Subtotal {money(source.subtotalCents)} · IVA{" "}
-                {money(source.taxCents)}
-              </span>
             </div>
           )}
           {kind === "salida" && (
@@ -675,17 +691,12 @@ export function MovementForm({
             </div>
           )}
           {source ? (
-            <div className="source-lines">
-              {source.items.map((item, i) => (
-                <div key={i}>
-                  <span>
-                    {item.quantity} × {item.description}
-                    <small>{money(item.unitCents)} por unidad</small>
-                  </span>
-                  <strong className="number">{money(item.totalCents)}</strong>
-                </div>
-              ))}
-            </div>
+            <SaleBreakdown
+              items={source.items}
+              subtotal={source.subtotalCents}
+              tax={source.taxCents}
+              total={source.totalCents}
+            />
           ) : (
             <div className="line-editor">
               {items.map((line, i) => (
@@ -837,7 +848,6 @@ export function MovementForm({
               employees={employees}
               value={commission}
               onChange={setCommission}
-              defaultRateBps={defaultRateBps}
               total={total}
             />
           )}
@@ -845,10 +855,12 @@ export function MovementForm({
             Nota <span className="optional">Opcional</span>
             <textarea name="notes" maxLength={2000} rows={2} />
           </label>
-          <div className="form-total">
-            <span>Total</span>
-            <strong className="number">{money(total)}</strong>
-          </div>
+          {!source && (
+            <div className="form-total">
+              <span>Total</span>
+              <strong className="number">{money(total)}</strong>
+            </div>
+          )}
           {error && (
             <div role="alert" className="error">
               {error}
@@ -1205,83 +1217,54 @@ export function PaymentForm({
   );
 }
 
-export function PreferenceForm({
-  rateBps,
-  write,
-  onDone,
-  onClose,
-}: {
-  rateBps: number | null;
-  write: Write;
-  onDone: () => void;
-  onClose: () => void;
-}) {
-  const [value, setValue] = useState(
-    rateBps === null ? "" : String(rateBps / 100),
-  );
-  const { busy, error, submit } = useSubmit(write, onDone);
-  return (
-    <form
-      onSubmit={(event) => {
-        event.preventDefault();
-        void submit("preferences.save", { rate: value.trim() ? value : null });
-      }}
-    >
-      <div className="modal-body">
-        <fieldset className="form-stack" disabled={busy}>
-          <label>
-            Porcentaje sugerido (%)
-            <input
-              inputMode="decimal"
-              autoFocus
-              value={value}
-              onChange={(event) => setValue(event.target.value)}
-              placeholder="Sin sugerencia"
-            />
-          </label>
-          {error && (
-            <div className="error" role="alert">
-              {error}
-            </div>
-          )}
-        </fieldset>
-      </div>
-      <Footer busy={busy} onClose={onClose} label="Guardar preferencia" />
-    </form>
-  );
-}
-
 export function PayoutForm({
   employees,
   initialEmployeeId,
   initialPeriod,
   initialAnchor,
+  initialFrom,
+  initialTo,
   write,
   onDone,
   onClose,
 }: {
   employees: Employee[];
   initialEmployeeId?: string;
-  initialPeriod: string;
-  initialAnchor: string;
+  initialPeriod?: PeriodSelection["period"];
+  initialAnchor?: string;
+  initialFrom?: string;
+  initialTo?: string;
   write: Write;
   onDone: () => void;
   onClose: () => void;
 }) {
-  const [employeeId, setEmployeeId] = useState(initialEmployeeId || ""),
-    [period, setPeriod] = useState(initialPeriod),
-    [anchor, setAnchor] = useState(initialAnchor),
-    [paidOn, setPaidOn] = useState(businessToday());
+  const [employeeId, setEmployeeId] = useState(initialEmployeeId || "");
+  const [selection, setSelection] = useState<PeriodSelection>({
+    period: initialPeriod || "all",
+    anchor: initialAnchor || businessToday(),
+    from: initialFrom || businessToday(),
+    to: initialTo || businessToday(),
+  });
+  const { period, anchor, from, to } = selection;
   const [preview, setPreview] = useState<PayoutPreview | null>(null),
     [loading, setLoading] = useState(false),
     [loadError, setLoadError] = useState(""),
     [revision, setRevision] = useState(0);
   const { busy, error, submit } = useSubmit(write, onDone);
-  const range = periodRange(period, anchor);
+  let range: { from: string; to: string } | null = null;
+  let rangeError = "";
+  try {
+    range = periodRange(period, anchor, from, to);
+  } catch (error) {
+    rangeError = (error as Error).message;
+  }
   useEffect(() => {
     setPreview(null);
     setLoadError("");
-    if (!employeeId) return;
+    if (!employeeId || !range) {
+      setLoading(false);
+      return;
+    }
     const controller = new AbortController();
     setLoading(true);
     const params = new URLSearchParams({
@@ -1289,6 +1272,8 @@ export function PayoutForm({
       employeeId,
       period,
       anchor,
+      from,
+      to,
     });
     void fetch("/api/admin?" + params, { signal: controller.signal })
       .then(async (response) => {
@@ -1303,8 +1288,9 @@ export function PayoutForm({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [employeeId, period, anchor, revision]);
+  }, [employeeId, period, anchor, from, to, !!range, revision]);
   const current =
+    range &&
     preview?.employeeId === employeeId &&
     preview.from === range.from &&
     preview.to === range.to
@@ -1319,8 +1305,9 @@ export function PayoutForm({
           employeeId,
           period,
           anchor,
-          paidOn,
-          commissionIds: current.commissions.map((c) => c.id),
+          from,
+          to,
+          snapshot: current.snapshot,
           expectedTotalCents: current.totalCents,
         });
       }}
@@ -1339,29 +1326,21 @@ export function PayoutForm({
             ]}
             onChange={setEmployeeId}
           />
-          <div className="form-grid">
-            <Select
-              label="Periodo"
-              value={period}
-              onChange={setPeriod}
-              options={[
-                { value: "day", label: "Día" },
-                { value: "week", label: "Semana" },
-                { value: "month", label: "Mes" },
-              ]}
-            />
-            <DatePicker
-              label="Fecha del periodo"
-              value={anchor}
-              onChange={setAnchor}
-            />
-          </div>
+          <PeriodControls value={selection} onChange={setSelection} allowAll />
           <div className="payout-summary">
             <Wallet size={30} />
             <div>
               <span>
-                {shortDate(range.from)}
-                {range.from !== range.to ? " — " + shortDate(range.to) : ""}
+                {period === "all" ? (
+                  "Todas las pendientes"
+                ) : range ? (
+                  <>
+                    {shortDate(range.from)}
+                    {range.from !== range.to ? " — " + shortDate(range.to) : ""}
+                  </>
+                ) : (
+                  "Selecciona un rango válido"
+                )}
               </span>
               <strong className="number">
                 {loading ? "…" : money(current?.totalCents || 0)}
@@ -1388,16 +1367,9 @@ export function PayoutForm({
               )}
             </div>
           )}
-          {!!current?.commissions.length && (
-            <DatePicker
-              label="Fecha de pago"
-              value={paidOn}
-              onChange={setPaidOn}
-            />
-          )}
-          {(error || loadError) && (
+          {(error || loadError || rangeError) && (
             <div className="error" role="alert">
-              {error || loadError}
+              {error || loadError || rangeError}
               <button
                 type="button"
                 className="text-button"
@@ -1552,21 +1524,12 @@ export function DetailView({
           </div>
         )}
       </dl>
-      <div className="source-lines">
-        {movement.items.map((line, i) => (
-          <div key={i}>
-            <span>
-              {line.quantity} × {line.description}
-              <small>{money(line.unitCents)} por unidad</small>
-            </span>
-            <strong className="number">{money(line.totalCents)}</strong>
-          </div>
-        ))}
-      </div>
-      <div className="detail-tax">
-        <span>Subtotal {money(movement.subtotal_cents)}</span>
-        <span>IVA {money(movement.tax_cents)}</span>
-      </div>
+      <SaleBreakdown
+        items={movement.items}
+        subtotal={movement.subtotal_cents}
+        tax={movement.tax_cents}
+        total={movement.total_cents}
+      />
       {movement.commission_id && (
         <div className="commission-detail">
           <strong>Comisión · {movement.employee_name}</strong>

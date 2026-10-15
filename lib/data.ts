@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { PoolClient } from "pg";
-import { query, transaction } from "./db.ts";
+import { query, queryShared, transaction } from "./db.ts";
 import { scanValue } from "./scanner.ts";
 import {
   ValidationError,
@@ -98,19 +98,31 @@ export async function lookupSales(
   const needle = scanValue(text(code, "Código o folio", 110));
   const ref = parseTicketReference(needle);
   const values = ref ? [ref.kind, ref.id] : [needle];
-  const sql = `SELECT s.*, (s.sold_at AT TIME ZONE 'America/Mexico_City')::date::text AS business_date,m.id AS registered_id
-    FROM (${SALE_UNION}) s LEFT JOIN LATERAL (
-      SELECT m.id FROM administracion.movements m WHERE
-      (m.source_kind=s.kind AND m.source_id=s.id) OR
-      m.manual_ticket_code=('LLA1:' || CASE WHEN s.kind='ventas' THEN 'V' ELSE 'P' END || ':' || s.id) OR
-      (lower(btrim(m.manual_folio))=lower(btrim(s.folio)) AND m.manual_origin IN ('manual',s.origin))
-      ORDER BY m.created_at LIMIT 1
-    ) m ON true
+  const sql = `SELECT s.*, (s.sold_at AT TIME ZONE 'America/Mexico_City')::date::text AS business_date
+    FROM (${SALE_UNION}) s
     WHERE ${ref ? "s.kind=$1 AND s.id=$2" : "(s.folio=$1 OR s.id=$1)"} ORDER BY s.sold_at DESC LIMIT 20`;
-  const result = client
-    ? await client.query(sql, values)
-    : await query(sql, values);
-  return result.rows.map(saleRow);
+  const result = await queryShared(sql, values);
+  const sales: Sale[] = [];
+  for (const row of result.rows) {
+    const registrationSql = `SELECT id FROM administracion.movements WHERE
+      (source_kind=$1 AND source_id=$2) OR manual_ticket_code=$3 OR
+      (lower(btrim(manual_folio))=lower(btrim($4)) AND manual_origin IN ('manual',$5))
+      ORDER BY created_at LIMIT 1`;
+    const params = [
+      row.kind,
+      row.id,
+      ticketReference(row.kind, row.id),
+      row.folio,
+      row.origin,
+    ];
+    const registered = client
+      ? await client.query(registrationSql, params)
+      : await query(registrationSql, params);
+    sales.push(
+      saleRow({ ...row, registered_id: registered.rows[0]?.id || null }),
+    );
+  }
+  return sales;
 }
 
 const numericFields = [
@@ -159,7 +171,6 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     employees,
     suppliers,
     commissions,
-    preferences,
   ] = await Promise.all([
     query(
       `SELECT
@@ -206,9 +217,6 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
       WHERE ${view === "comisiones-pendientes" ? "c.paid_on IS NULL AND l.voided_at IS NULL AND $1::date<=$2::date" : "l.date BETWEEN $1::date AND $2::date"} ORDER BY l.date DESC,c.created_at DESC`,
       [from, to],
     ),
-    query(
-      "SELECT commission_rate_bps FROM administracion.preferences WHERE singleton",
-    ),
   ]);
   const t = totals.rows[0],
     c = cash.rows[0],
@@ -230,7 +238,6 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
   summary.profit = summary.income - summary.expenses - summary.commissions;
   summary.cash = summary.collected - summary.paid - summary.commissionPaid;
   return {
-    commissionRateBps: preferences.rows[0]?.commission_rate_bps ?? null,
     summary,
     movements: movements.rows.map(movementRow),
     total: Number(count.rows[0].count),
@@ -280,8 +287,8 @@ async function lockMovement(client: PoolClient, id: unknown) {
   const row = result.rows[0];
   if (row.voided_at) throw new ValidationError("El movimiento está anulado.");
   if (row.source_id) {
-    const source = await client.query(
-      `SELECT id${row.source_kind === "ventas" ? ",cancelada" : ""} FROM public.${row.source_kind === "ventas" ? "ventas" : "ventas_productos"} WHERE id=$1 FOR SHARE`,
+    const source = await queryShared(
+      `SELECT id${row.source_kind === "ventas" ? ",cancelada" : ""} FROM public.${row.source_kind === "ventas" ? "ventas" : "ventas_productos"} WHERE id=$1`,
       [row.source_id],
     );
     if (!source.rows[0] || source.rows[0].cancelada)
@@ -309,28 +316,16 @@ async function addCommission(
   );
   if (!employee.rows.length)
     throw new ValidationError("Selecciona un empleado activo.");
-  const amount = commissionAmount(total, commission.mode, commission.value);
+  if (
+    (commission.mode !== undefined && commission.mode !== "fixed") ||
+    commission.rememberRate === true
+  )
+    throw new ValidationError("La comisión se captura como un importe manual.");
+  const amount = commissionAmount(total, "fixed", commission.value);
   await client.query(
     "INSERT INTO administracion.commissions(id,movement_id,employee_id,amount_cents,mode,rate_bps) VALUES($1,$2,$3,$4,$5,$6)",
-    [
-      randomUUID(),
-      movementId,
-      employeeId,
-      amount,
-      commission.mode,
-      commission.mode === "percent"
-        ? cents(commission.value, "Porcentaje")
-        : null,
-    ],
+    [randomUUID(), movementId, employeeId, amount, "fixed", null],
   );
-  if (commission.rememberRate === true) {
-    if (commission.mode !== "percent")
-      throw new ValidationError("La sugerencia debe ser un porcentaje.");
-    await client.query(
-      "UPDATE administracion.preferences SET commission_rate_bps=$1 WHERE singleton",
-      [cents(commission.value, "Porcentaje")],
-    );
-  }
 }
 
 async function addPayment(
@@ -455,12 +450,7 @@ async function createMovement(client: PoolClient, input: RecordInput) {
     if (!["ventas", "ventas_productos"].includes(String(identity.kind)))
       throw new ValidationError("Origen inválido.");
     const sourceId = text(identity.id, "Ticket", 80);
-    // Lock the source against concurrent cancellation while importing. Never write stock or sales.
-    const locked = await client.query(
-      `SELECT id FROM public.${identity.kind === "ventas" ? "ventas" : "ventas_productos"} WHERE id=$1 FOR SHARE`,
-      [sourceId],
-    );
-    if (!locked.rows.length) throw new ValidationError("El ticket no existe.");
+    // Read a snapshot from the source through a SELECT-only connection. No source locks or writes.
     const found = await lookupSales(
       `LLA1:${identity.kind === "ventas" ? "V" : "P"}:${sourceId}`,
       client,
@@ -592,13 +582,51 @@ async function createMovement(client: PoolClient, input: RecordInput) {
   return { id };
 }
 
+function payoutSnapshot(
+  employeeId: string,
+  from: string,
+  to: string,
+  commissions: { id: string; amount_cents: number | string }[],
+) {
+  const entries = commissions
+    .map(
+      (commission) =>
+        [commission.id.toLowerCase(), Number(commission.amount_cents)] as const,
+    )
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0));
+  return createHash("sha256")
+    .update(JSON.stringify([1, employeeId.toLowerCase(), from, to, entries]))
+    .digest("hex");
+}
+
+async function pendingPayoutRows(
+  client: PoolClient,
+  employeeId: string,
+  from: string,
+  to: string,
+) {
+  return client.query<{
+    id: string;
+    movement_id: string;
+    amount_cents: string;
+  }>(
+    `SELECT c.id,c.movement_id,c.amount_cents
+    FROM administracion.commissions c JOIN administracion.movements m ON m.id=c.movement_id
+    WHERE c.employee_id=$1 AND c.paid_on IS NULL AND m.voided_at IS NULL
+    AND m.date BETWEEN $2::date AND $3::date ORDER BY c.id`,
+    [employeeId, from, to],
+  );
+}
+
 export async function payoutPreview(
   employeeId: string,
   period: string,
   anchor: string,
+  customFrom?: string,
+  customTo?: string,
 ): Promise<PayoutPreview> {
-  uuid(employeeId);
-  const { from, to } = periodRange(period, anchor);
+  employeeId = uuid(employeeId).toLowerCase();
+  const { from, to } = periodRange(period, anchor, customFrom, customTo);
   const employee = await query(
     "SELECT id FROM administracion.employees WHERE id=$1",
     [employeeId],
@@ -623,22 +651,57 @@ export async function payoutPreview(
     to,
     commissions,
     totalCents: commissions.reduce((sum, c) => sum + c.amount_cents, 0),
+    snapshot: payoutSnapshot(employeeId, from, to, commissions),
   };
 }
 
 async function payCommissions(client: PoolClient, input: RecordInput) {
-  const employeeId = uuid(input.employeeId),
-    paidOn = date(input.paidOn);
+  const employeeId = uuid(input.employeeId).toLowerCase(),
+    paidOn = date(input.paidOn || businessToday());
   const period = text(input.period, "Periodo", 10),
-    anchor = date(input.anchor);
-  const { from, to } = periodRange(period, anchor);
+    anchor = typeof input.anchor === "string" ? input.anchor : businessToday();
+  const { from, to } = periodRange(
+    period,
+    anchor,
+    input.from as string | undefined,
+    input.to as string | undefined,
+  );
+  const hasSnapshot = input.snapshot !== undefined;
   if (
-    !Array.isArray(input.commissionIds) ||
-    !input.commissionIds.length ||
-    input.commissionIds.length > 5000
+    hasSnapshot &&
+    (typeof input.snapshot !== "string" ||
+      !/^[a-f\d]{64}$/.test(input.snapshot))
   )
-    throw new ValidationError("Selecciona comisiones pendientes para pagar.");
-  const ids = input.commissionIds.map(uuid);
+    throw new ValidationError(
+      "Vuelve a revisar las comisiones antes de pagar.",
+    );
+  // New commissions take a shared employee lock when they are assigned. Holding
+  // this row prevents the reviewed pending set from growing during settlement.
+  const employee = await client.query(
+    "SELECT id FROM administracion.employees WHERE id=$1 FOR UPDATE",
+    [employeeId],
+  );
+  if (!employee.rows.length)
+    throw new ValidationError("Selecciona un empleado.");
+  let ids: string[];
+  if (hasSnapshot) {
+    const pending = await pendingPayoutRows(client, employeeId, from, to);
+    if (payoutSnapshot(employeeId, from, to, pending.rows) !== input.snapshot)
+      throw new ValidationError(
+        "Las comisiones cambiaron. Vuelve a revisar el pago.",
+      );
+    ids = pending.rows.map((commission) => commission.id);
+    if (!ids.length)
+      throw new ValidationError("No hay comisiones pendientes para pagar.");
+  } else {
+    if (
+      !Array.isArray(input.commissionIds) ||
+      !input.commissionIds.length ||
+      input.commissionIds.length > 5000
+    )
+      throw new ValidationError("Selecciona comisiones pendientes para pagar.");
+    ids = input.commissionIds.map(uuid);
+  }
   if (new Set(ids).size !== ids.length)
     throw new ValidationError("Hay comisiones repetidas.");
   // Lock movements first, in stable order, matching the payment/void lock order.
@@ -651,7 +714,47 @@ async function payCommissions(client: PoolClient, input: RecordInput) {
     throw new ValidationError(
       "Las comisiones cambiaron. Vuelve a revisar el pago.",
     );
-  for (const row of initial.rows) await lockMovement(client, row.movement_id);
+  const movements = await client.query<{
+    id: string;
+    source_kind: string | null;
+    source_id: string | null;
+    voided_at: string | null;
+  }>(
+    `SELECT m.id,m.source_kind,m.source_id,m.voided_at FROM administracion.movements m
+    WHERE m.id=ANY($1::uuid[]) ORDER BY m.id FOR UPDATE`,
+    [initial.rows.map((commission) => commission.movement_id)],
+  );
+  if (movements.rows.length !== ids.length)
+    throw new ValidationError(
+      "Las comisiones cambiaron. Vuelve a revisar el pago.",
+    );
+  if (movements.rows.some((movement) => movement.voided_at))
+    throw new ValidationError("El movimiento está anulado.");
+  // Source tickets are read in groups; historical payouts need only two source
+  // queries regardless of how many individual commissions the owner reviews.
+  for (const kind of ["ventas", "ventas_productos"] as const) {
+    const sourceIds = [
+      ...new Set(
+        movements.rows
+          .filter(
+            (movement) => movement.source_kind === kind && movement.source_id,
+          )
+          .map((movement) => movement.source_id!),
+      ),
+    ];
+    if (!sourceIds.length) continue;
+    const source = await queryShared<{ id: string; cancelada?: boolean }>(
+      `SELECT id${kind === "ventas" ? ",cancelada" : ""} FROM public.${kind} WHERE id=ANY($1::text[])`,
+      [sourceIds],
+    );
+    if (
+      source.rows.length !== sourceIds.length ||
+      source.rows.some((sale) => sale.cancelada)
+    )
+      throw new ValidationError(
+        "El ticket de origen está cancelado o no está disponible. Revisa los cobros y comisiones.",
+      );
+  }
   const result = await client.query(
     `SELECT c.*,m.date::text FROM administracion.commissions c
     JOIN administracion.movements m ON m.id=c.movement_id WHERE c.id=ANY($1::uuid[])
@@ -670,6 +773,13 @@ async function payCommissions(client: PoolClient, input: RecordInput) {
       );
     if (paidOn < row.date)
       throw new ValidationError("El pago no puede ser anterior a las ventas.");
+  }
+  if (hasSnapshot) {
+    const pending = await pendingPayoutRows(client, employeeId, from, to);
+    if (payoutSnapshot(employeeId, from, to, pending.rows) !== input.snapshot)
+      throw new ValidationError(
+        "Las comisiones cambiaron. Vuelve a revisar el pago.",
+      );
   }
   const total = result.rows.reduce(
     (sum, row) => sum + Number(row.amount_cents),
@@ -744,14 +854,9 @@ async function executeAction(
   }
   if (action === "commission.batchPay") return payCommissions(client, input);
   if (action === "preferences.save") {
-    const rate = input.rate === null ? null : cents(input.rate, "Porcentaje");
-    if (rate !== null && rate > 10000)
-      throw new ValidationError("El porcentaje no puede superar 100%.");
-    await client.query(
-      "UPDATE administracion.preferences SET commission_rate_bps=$1 WHERE singleton",
-      [rate],
+    throw new ValidationError(
+      "La comisión se captura como un importe manual; no se guardan porcentajes.",
     );
-    return { id: "00000000-0000-0000-0000-000000000001" };
   }
   if (action === "commission.pay") {
     const id = uuid(input.id);

@@ -13,7 +13,6 @@ import {
   Users,
   Wallet,
   X,
-  BadgePercent,
   ReceiptText,
   Banknote,
 } from "lucide-react";
@@ -24,11 +23,11 @@ import type {
   Payment,
   Sale,
 } from "@/lib/types";
-import { periodRange } from "@/lib/domain";
-import { DatePicker, Modal, Select, money, shortDate } from "./ui";
+import { periodRange, type PeriodSelection } from "@/lib/domain";
+import { Modal, Select, money, shortDate } from "./ui";
+import PeriodControls from "./PeriodControls";
 import {
   PayoutForm,
-  PreferenceForm,
   ConfirmForm,
   DetailView,
   MasterForm,
@@ -50,7 +49,6 @@ type Dialog = {
     | "detail"
     | "payment"
     | "payout"
-    | "preference"
     | "void";
   source?: Sale;
   initial?: Employee;
@@ -66,7 +64,7 @@ const sections = [
 const panels = [
   { id: "ventas" as const, label: "Ventas" },
   { id: "salidas" as const, label: "Salidas" },
-  { id: "cobros" as const, label: "Por cobrar" },
+  { id: "cobros" as const, label: "Ventas a crédito" },
   { id: "proveedores" as const, label: "Proveedores" },
   { id: "comisiones" as const, label: "Comisiones" },
 ];
@@ -99,8 +97,12 @@ function Status({ m }: { m: Movement }) {
 export default function Dashboard({ today }: { today: string }) {
   const [section, setSection] = useState<Section>("registro"),
     [panel, setPanel] = useState<Panel>("ventas");
-  const [period, setPeriod] = useState("day"),
-    [anchor, setAnchor] = useState(today),
+  const [selection, setSelection] = useState<PeriodSelection>({
+      period: "day",
+      anchor: today,
+      from: today,
+      to: today,
+    }),
     [page, setPage] = useState(1);
   const [data, setData] = useState<AdminState | null>(null),
     [loading, setLoading] = useState(true),
@@ -111,7 +113,16 @@ export default function Dashboard({ today }: { today: string }) {
     [toast, setToast] = useState("");
   const [employeeId, setEmployeeId] = useState(""),
     [showDeleted, setShowDeleted] = useState(false);
-  const range = useMemo(() => periodRange(period, anchor), [period, anchor]);
+  const range = useMemo(
+    () =>
+      periodRange(
+        selection.period,
+        selection.anchor,
+        selection.from,
+        selection.to,
+      ),
+    [selection],
+  );
   const fetchId = useRef(0);
   const view =
     section === "empleados"
@@ -178,16 +189,6 @@ export default function Dashboard({ today }: { today: string }) {
     setPanel(value);
     setPage(1);
   }
-  function shift(direction: number) {
-    const day = new Date(anchor + "T12:00:00Z");
-    if (period === "month") day.setUTCMonth(day.getUTCMonth() + direction, 1);
-    else
-      day.setUTCDate(
-        day.getUTCDate() + direction * (period === "week" ? 7 : 1),
-      );
-    setAnchor(day.toISOString().slice(0, 10));
-    setPage(1);
-  }
   const write: Write = useCallback(async (action, payload, requestId) => {
     setWriting(true);
     try {
@@ -238,55 +239,6 @@ export default function Dashboard({ today }: { today: string }) {
   );
   const commissions = (data?.commissions || []).filter((c) => !c.voided_at);
   const selectedEmployee = data?.employees.find((e) => e.id === employeeId);
-
-  function periodControls() {
-    return (
-      <div className="period-controls">
-        <div className="segmented" aria-label="Período">
-          {[
-            { id: "day", label: "Día" },
-            { id: "week", label: "Semana" },
-            { id: "month", label: "Mes" },
-          ].map((item) => (
-            <button
-              key={item.id}
-              className={period === item.id ? "selected" : ""}
-              onClick={() => {
-                setPeriod(item.id);
-                setPage(1);
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-        <div className="period-date">
-          <button
-            className="icon-button"
-            aria-label="Período anterior"
-            onClick={() => shift(-1)}
-          >
-            <ChevronLeft size={22} />
-          </button>
-          <DatePicker
-            label="Fecha"
-            value={anchor}
-            onChange={(value) => {
-              setAnchor(value);
-              setPage(1);
-            }}
-          />
-          <button
-            className="icon-button"
-            aria-label="Período siguiente"
-            onClick={() => shift(1)}
-          >
-            <ChevronRight size={22} />
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   function movementTable() {
     return (
@@ -464,7 +416,6 @@ export default function Dashboard({ today }: { today: string }) {
         detail: "Detalle",
         payment: "Registrar pago",
         payout: "Liquidar comisiones",
-        preference: "Comisión sugerida",
         void: "Anular registro",
       }[dialog.type]
     : "";
@@ -511,15 +462,6 @@ export default function Dashboard({ today }: { today: string }) {
           </h1>
           {section === "empleados" && (
             <div className="heading-actions">
-              <button
-                className="button secondary"
-                onClick={() => setDialog({ type: "preference" })}
-              >
-                <BadgePercent size={22} />
-                {data?.commissionRateBps
-                  ? data.commissionRateBps / 100 + "% sugerido"
-                  : "Comisión sugerida"}
-              </button>
               <button
                 className="button primary"
                 onClick={() => setDialog({ type: "employee" })}
@@ -606,7 +548,15 @@ export default function Dashboard({ today }: { today: string }) {
             </div>
           </div>
         )}
-        {section !== "registro" && periodControls()}
+        {section !== "registro" && (
+          <PeriodControls
+            value={selection}
+            onChange={(value) => {
+              setSelection(value);
+              setPage(1);
+            }}
+          />
+        )}
         {loading && !data ? (
           <div className="loading-state" role="status">
             Cargando…
@@ -673,6 +623,12 @@ export default function Dashboard({ today }: { today: string }) {
                       </strong>
                     )}
                   </div>
+                  {panel === "cobros" && (
+                    <p className="credit-panel-note">
+                      Saldo pendiente de las ventas registradas con pago parcial
+                      o a crédito.
+                    </p>
+                  )}
                   {panel === "comisiones" ? commissionTable() : movementTable()}
                 </>
               )}
@@ -845,7 +801,6 @@ export default function Dashboard({ today }: { today: string }) {
           {dialog.type === "entrada" && !dialog.source && (
             <ManualSaleForm
               employees={data.employees}
-              defaultRateBps={data.commissionRateBps}
               write={write}
               onDone={saved}
               onClose={() => setDialog(null)}
@@ -859,7 +814,6 @@ export default function Dashboard({ today }: { today: string }) {
               employees={data.employees}
               suppliers={data.suppliers}
               providerNames={[]}
-              defaultRateBps={data.commissionRateBps}
               write={write}
               onDone={saved}
               onClose={() => setDialog(null)}
@@ -901,21 +855,13 @@ export default function Dashboard({ today }: { today: string }) {
             <PayoutForm
               employees={data.employees}
               initialEmployeeId={dialog.id}
-              initialPeriod={period}
-              initialAnchor={anchor}
+              initialPeriod="all"
+              initialAnchor={today}
               write={write}
               onDone={() => {
                 saved();
                 setToast("Comisiones pagadas");
               }}
-              onClose={() => setDialog(null)}
-            />
-          )}
-          {dialog.type === "preference" && (
-            <PreferenceForm
-              rateBps={data.commissionRateBps}
-              write={write}
-              onDone={saved}
               onClose={() => setDialog(null)}
             />
           )}

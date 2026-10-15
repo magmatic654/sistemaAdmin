@@ -7,6 +7,12 @@ export const METHODS = [
 ] as const;
 export type Method = (typeof METHODS)[number];
 export type RecordInput = Record<string, unknown>;
+export type PeriodSelection = {
+  period: "day" | "week" | "month" | "custom" | "all";
+  anchor: string;
+  from: string;
+  to: string;
+};
 
 export function text(
   value: unknown,
@@ -76,7 +82,22 @@ export function businessToday(now = new Date()) {
     day: "2-digit",
   }).format(now);
 }
-export function periodRange(period: string, anchor: string) {
+export function periodRange(
+  period: string,
+  anchor: string,
+  from?: string,
+  to?: string,
+) {
+  if (period === "all") return { from: "2000-01-01", to: "2100-12-31" };
+  if (period === "custom") {
+    const start = date(from);
+    const end = date(to);
+    if (start > end)
+      throw new ValidationError(
+        "La fecha inicial debe ser anterior o igual a la final.",
+      );
+    return { from: start, to: end };
+  }
   date(anchor);
   const start = new Date(anchor + "T12:00:00Z");
   const end = new Date(start);
@@ -88,7 +109,9 @@ export function periodRange(period: string, anchor: string) {
     start.setUTCDate(1);
     end.setUTCMonth(end.getUTCMonth() + 1, 0);
   } else if (period !== "day")
-    throw new ValidationError("Selecciona día, semana o mes.");
+    throw new ValidationError(
+      "Selecciona día, semana, mes, rango personalizado o todo.",
+    );
   return {
     from: start.toISOString().slice(0, 10),
     to: end.toISOString().slice(0, 10),

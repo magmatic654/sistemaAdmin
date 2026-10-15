@@ -2337,3 +2337,185 @@ th {
     transition: none !important;
   }
 }
+
+.sale-breakdown {
+  flex-shrink: 0;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+}
+.sale-breakdown-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  gap: 18px;
+  align-items: center;
+  padding: 18px;
+  border-bottom: 1px solid var(--rule);
+}
+.sale-breakdown-item h4 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.4;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.sale-breakdown-item dl {
+  display: grid;
+  grid-template-columns: 0.6fr 1fr 1fr;
+  gap: 12px;
+  margin: 0;
+}
+.sale-breakdown dt {
+  color: var(--secondary);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.sale-breakdown dd {
+  margin: 4px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.sale-breakdown-totals {
+  margin: 0;
+  padding: 14px 18px;
+  background: #f7f9fc;
+}
+.sale-breakdown-totals > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 5px 0;
+}
+.sale-breakdown-totals dd {
+  margin: 0;
+}
+.sale-breakdown-totals .sale-breakdown-total {
+  border-top: 1px solid var(--rule);
+  margin-top: 7px;
+  padding-top: 12px;
+}
+.sale-breakdown-total dt,
+.sale-breakdown-total dd {
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 700;
+}
+@media (max-width: 600px) {
+  .sale-breakdown-item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    padding: 15px;
+  }
+  .sale-breakdown-item dl {
+    grid-template-columns: 0.6fr 1fr 1fr;
+    gap: 8px;
+  }
+  .sale-breakdown-totals {
+    padding: 12px 15px;
+  }
+}
+
+/* Periods share the same controls in reports and employee settlements. */
+.period-selector {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 18px 24px;
+  padding-bottom: 24px;
+  margin-bottom: 28px;
+  border-bottom: 1px solid var(--rule);
+}
+.period-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 5px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: #f6f8fb;
+}
+.period-options button {
+  min-height: 44px;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 16px;
+  background: transparent;
+  color: var(--secondary);
+  font-size: 16px;
+  font-weight: 600;
+}
+.period-options button.selected {
+  background: var(--ink);
+  color: #fff;
+}
+.period-options button:hover:not(.selected) {
+  background: #e8edf4;
+}
+.period-interval {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.period-interval > span {
+  text-align: center;
+  font-size: 17px;
+  font-weight: 600;
+}
+.period-custom {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.period-custom .choice-trigger {
+  min-height: 46px;
+  font-size: 16px;
+}
+.period-all-label {
+  color: var(--secondary);
+  font-size: 16px;
+}
+.credit-panel-note {
+  color: var(--secondary);
+  font-size: 16px;
+  margin: -4px 0 18px;
+}
+@media (max-width: 600px) {
+  .period-selector {
+    gap: 14px;
+    margin-bottom: 22px;
+    padding-bottom: 20px;
+  }
+  .period-options {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .period-options button {
+    min-width: 0;
+    padding: 9px 8px;
+  }
+  .period-options button:nth-child(4),
+  .period-options button.all-pending {
+    grid-column: 1/-1;
+  }
+  .period-interval {
+    width: 100%;
+    justify-content: space-between;
+    gap: 4px;
+  }
+  .period-interval > span {
+    font-size: 15px;
+  }
+  .period-custom {
+    width: 100%;
+  }
+  .period-custom .choice-trigger {
+    padding-inline: 10px;
+    font-size: 14px;
+    gap: 5px;
+  }
+}

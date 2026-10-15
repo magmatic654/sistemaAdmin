@@ -5,10 +5,12 @@ const check = process.argv.includes("--check");
 // Production runs require a reviewed deployment migration, never this dev helper.
 const url = new URL(process.env.DATABASE_URL || "postgresql://invalid");
 if (
-  process.env.SHARED_DATABASE_ENVIRONMENT !== "development" ||
+  process.env.ADMIN_DATABASE_ENVIRONMENT !== "development" ||
   url.hostname !== "127.0.0.1" ||
   url.port !== "55439" ||
-  !["/llantas_unified_dev", "/llantas_admin_tests"].includes(url.pathname)
+  !["/llantas_administracion_dev", "/llantas_admin_tests"].includes(
+    url.pathname,
+  )
 )
   throw Error(
     "This helper only accepts the explicit local development or administration test database.",
@@ -23,6 +25,8 @@ try {
         "002-manual-registration.sql",
         "003-commission-settlements.sql",
         "004-offline-manual-sales.sql",
+        "005-periods.sql",
+        "006-administration-identity.sql",
       ])
         await client.query(
           await fs.readFile(
@@ -42,7 +46,7 @@ try {
   if (rows.length !== 1 || rows[0].version !== 1)
     throw Error("Incompatible administration schema.");
   console.log(
-    "Administration schema v1 verified. Shared sales and stock are unchanged.",
+    "Own Administration schema v1 verified. Shared sales and stock are read-only.",
   );
 } finally {
   client.release();
