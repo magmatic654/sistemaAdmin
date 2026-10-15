@@ -2,7 +2,9 @@
 
 - Mantener sólo tres secciones principales: Registro, Resumen y Empleados.
 - No implementar inicio de sesión mientras el propietario no lo solicite.
-- Fondo blanco, letra grande, acentos de color con intención y mínimo texto. No agregar gráficas.
+- Fondo blanco, letra grande y mínimo texto. Usar tonos neutros: verde sólo para
+  ganancia positiva, rojo para pérdida o errores/acciones destructivas. Cero neutro.
+  No agregar gráficas ni colores por categoría financiera.
 - Ninguna vista ni formulario debe generar desplazamiento horizontal, tampoco
   dentro de tablas o paneles. Adaptar el contenido al ancho; sólo se permite scroll Y.
 - Todo registro financiero requiere confirmación manual. No importar ni mostrar
@@ -21,6 +23,8 @@
 - Las ventas por revisar y sus comisiones no entran en ventas confirmadas ni en
   la ganancia. Mostrar su importe aparte por periodo y distinguirlo de la cola
   global. Las comisiones por pagar sólo incluyen ventas aprobadas o validadas.
+- En Empleados, separar por pagar (autorizadas e impagadas), pagadas y por revisar;
+  nunca sumar las congeladas al importe por pagar ni presentarlas como pérdidas.
 - Ocultar la franja de ventas por revisar si el periodo no contiene pendientes.
   En Resumen, destacar ganancia grande y agrupar ventas, gastos y comisiones como
   detalles pequeños a su lado; en móvil, ganancia primero y detalles debajo.

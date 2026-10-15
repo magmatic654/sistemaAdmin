@@ -9,15 +9,9 @@
   --rule: #dde5ed;
   --rule-soft: #edf1f5;
   --green: #08775f;
-  --green-hover: #075e4d;
-  --green-wash: #eaf7f1;
   --red: #a1352a;
   --red-wash: #fff5f3;
-  --focus: #087c78;
-  --amber: #9a541d;
-  --amber-wash: #fff3e5;
-  --indigo: #51439c;
-  --indigo-wash: #f1effb;
+  --focus: var(--ink);
 }
 
 * {
@@ -457,12 +451,12 @@ tbody tr:hover {
   white-space: nowrap;
 }
 .pill.success {
-  background: var(--green-wash);
-  color: var(--green);
+  background: var(--rule-soft);
+  color: var(--ink);
 }
 .pill.pending {
-  background: var(--amber-wash);
-  color: var(--amber);
+  background: var(--rule-soft);
+  color: var(--secondary);
 }
 .pill.neutral {
   background: #f2f3f2;
@@ -541,9 +535,9 @@ tbody tr:hover {
   margin-left: 20px;
 }
 .warning {
-  background: var(--amber-wash);
-  color: var(--amber);
-  border-color: #eee0bd;
+  background: var(--rule-soft);
+  color: var(--ink);
+  border-color: var(--rule);
 }
 .toast {
   position: fixed;
@@ -1470,7 +1464,7 @@ label small {
 .date-stamp {
   color: var(--secondary);
   font-size: 17px;
-  border-left: 3px solid var(--green);
+  border-left: 1px solid var(--rule);
   padding-left: 14px;
 }
 .heading-actions {
@@ -1517,31 +1511,21 @@ label small {
   border-radius: 15px;
   flex: none;
 }
-.income-card {
-  background: var(--green-wash);
-  color: #075f4d;
-  border: 1px solid #b8dfd1;
-}
-.income-card .action-icon {
-  background: var(--green);
-  color: white;
-}
-.income-card:hover {
-  background: #dff2e9;
-  border-color: var(--green);
-}
+.income-card,
 .expense-card {
-  background: var(--amber-wash);
-  color: #85451b;
-  border: 1px solid #eed3b5;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule);
 }
+.income-card .action-icon,
 .expense-card .action-icon {
-  background: #a25a27;
-  color: white;
+  background: var(--rule-soft);
+  color: var(--ink);
 }
+.income-card:hover,
 .expense-card:hover {
-  background: #fce9d4;
-  border-color: #a25a27;
+  background: var(--rule-soft);
+  border-color: var(--tertiary);
 }
 .registration-card.scan-card {
   min-height: 136px;
@@ -1556,7 +1540,7 @@ label small {
   place-items: center;
   height: 66px;
   width: 66px;
-  color: #98e0d1;
+  color: #fff;
   border: 1px solid #53677e;
   border-radius: 12px;
 }
@@ -1603,26 +1587,7 @@ label small {
 .summary-card:last-child {
   border: 1px solid var(--rule);
   border-radius: 12px;
-  border-top: 4px solid var(--ink);
   padding: 23px;
-}
-.summary-card.gain {
-  background: var(--green-wash);
-  border-color: #c7e4d8;
-  border-top-color: var(--green);
-}
-.summary-card.collected {
-  border-top-color: #397a9a;
-}
-.summary-card.supplier-due {
-  border-top-color: #b5753e;
-}
-.summary-card.employee-due {
-  border-top-color: var(--indigo);
-  background: #faf9fe;
-}
-.summary-card.employee-due strong {
-  color: var(--indigo);
 }
 .summary-card > span {
   font-size: 16px;
@@ -1652,25 +1617,25 @@ th {
   align-self: center;
 }
 .selected-row {
-  background: #f1effb;
+  background: var(--rule-soft);
 }
 .employee-name {
-  color: var(--indigo);
+  color: var(--ink);
 }
 .modal {
   border-radius: 16px;
   box-shadow: 0 18px 80px #0f23322b;
 }
 .modal-header {
-  border-top: 4px solid var(--green);
+  border-top: 1px solid var(--rule);
 }
 .modal-footer {
   background: #f7f9fb;
 }
 .ticket-origin {
-  background: var(--green-wash);
-  border-color: #c3e3d5;
-  color: var(--green);
+  background: var(--rule-soft);
+  border-color: var(--rule);
+  color: var(--ink);
 }
 .ticket-origin > .pill {
   margin-left: auto;
@@ -1685,14 +1650,14 @@ th {
   margin-top: -12px;
 }
 .commission-box {
-  background: #f7f5fe;
-  border-color: #dcd5f3;
+  background: var(--rule-soft);
+  border-color: var(--rule);
 }
 .commission-box .switch-label strong {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--indigo);
+  color: var(--ink);
 }
 .commission-fields {
   margin-top: 22px;
@@ -1701,19 +1666,19 @@ th {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  border-top: 1px solid #dcd5f3;
+  border-top: 1px solid var(--rule);
   padding-top: 18px;
-  color: var(--indigo);
+  color: var(--ink);
 }
 .commission-calculation strong {
   font-size: 26px;
 }
 .form-total {
-  background: var(--green-wash);
+  background: var(--rule-soft);
   border-radius: 10px;
   padding: 20px;
   border: 0;
-  color: var(--green);
+  color: var(--ink);
 }
 .scanner-stage {
   display: flex;
@@ -1727,9 +1692,9 @@ th {
   color: var(--secondary);
 }
 .scanner-stage.armed {
-  background: var(--green-wash);
-  border-color: #a2d5c4;
-  color: var(--green);
+  background: var(--rule-soft);
+  border-color: var(--ink);
+  color: var(--ink);
 }
 .scanner-stage strong {
   font-size: 24px;
@@ -1748,7 +1713,7 @@ th {
   display: flex;
   align-items: center;
   gap: 10px;
-  color: var(--green);
+  color: var(--ink);
   padding-bottom: 18px;
   border-bottom: 1px solid var(--rule);
 }
@@ -1761,9 +1726,9 @@ th {
   display: flex;
   align-items: center;
   gap: 22px;
-  background: var(--indigo-wash);
-  color: var(--indigo);
-  border: 1px solid #dcd5f3;
+  background: var(--rule-soft);
+  color: var(--ink);
+  border: 1px solid var(--rule);
   border-radius: 12px;
   padding: 24px;
 }
@@ -1919,7 +1884,7 @@ th {
 }
 .manual-sale-modal .modal-header {
   padding: 18px 24px;
-  border-top: 3px solid #1875ef;
+  border-top: 1px solid var(--rule);
 }
 .manual-sale-modal .modal-header h2 {
   font-size: 24px;
@@ -1979,9 +1944,9 @@ th {
 }
 .manual-sale-commission {
   padding: 14px;
-  border: 1px solid #e1e6ee;
+  border: 1px solid var(--rule);
   border-radius: 14px;
-  background: #f8faff;
+  background: var(--rule-soft);
   min-width: 0;
 }
 .manual-sale-modal .manual-sale-switch {
@@ -1996,7 +1961,7 @@ th {
   gap: 10px;
 }
 .manual-sale-switch svg {
-  color: #1875ef;
+  color: var(--ink);
 }
 .manual-sale-switch strong {
   font-weight: 600;
@@ -2023,13 +1988,13 @@ th {
   transition: transform 0.15s;
 }
 .manual-sale-switch input:checked {
-  background: #1875ef;
+  background: var(--ink);
 }
 .manual-sale-switch input:checked::before {
   transform: translateX(18px);
 }
 .manual-sale-commission-fields {
-  border-top: 1px solid #e1e6ee;
+  border-top: 1px solid var(--rule);
   padding-top: 12px;
   margin-top: 12px;
 }
@@ -2040,13 +2005,13 @@ th {
   gap: 14px;
   padding: 12px 16px;
   border-radius: 12px;
-  background: #edf4ff;
+  background: var(--rule-soft);
   font-size: 17px;
-  color: #52657d;
+  color: var(--secondary);
   min-height: 52px;
 }
 .manual-sale-total strong {
-  color: #176de0;
+  color: var(--ink);
   font-size: 27px;
   font-weight: 650;
   line-height: 1;
@@ -2072,10 +2037,10 @@ th {
   padding: 10px 18px;
 }
 .manual-sale-modal .modal-footer .primary {
-  background: #1875ef;
+  background: var(--ink);
 }
 .manual-sale-modal .modal-footer .primary:hover:not(:disabled) {
-  background: #0b5eca;
+  background: #294763;
 }
 @media (max-width: 760px) {
   .manual-sale-backdrop {
@@ -2854,7 +2819,6 @@ th {
   min-width: 0;
   padding: 22px;
   border: 1px solid var(--rule);
-  border-top: 4px solid var(--summary-accent);
   border-radius: 12px;
   background: var(--paper);
 }
@@ -2879,7 +2843,7 @@ th {
   height: 28px;
   border-radius: 7px;
   background: var(--summary-wash);
-  color: var(--summary-accent);
+  color: var(--secondary);
   font-size: 23px;
   font-weight: 600;
   line-height: 1;
@@ -2899,8 +2863,6 @@ th {
   flex-wrap: wrap;
   gap: 8px 16px;
   padding: 16px 20px;
-  border-top-width: 1px;
-  border-left: 4px solid var(--summary-accent);
 }
 .profit-details .summary-term-heading {
   flex: 1 1 180px;
@@ -2909,26 +2871,15 @@ th {
 .profit-details .summary-card strong {
   font-size: clamp(24px, 2.2vw, 30px);
 }
-.profit-grid .expense-total {
-  --summary-accent: var(--amber);
-  --summary-wash: var(--amber-wash);
-}
-.profit-grid .commission-total {
-  --summary-accent: var(--indigo);
-  --summary-wash: var(--indigo-wash);
-}
 .profit-grid .gain {
   --summary-accent: var(--green);
-  --summary-wash: var(--paper);
-  background: var(--green-wash);
-  border-color: var(--green);
   justify-content: center;
   min-height: 296px;
   padding: 32px;
   gap: 20px;
 }
 .profit-grid .gain .summary-term-heading > span:last-child {
-  color: var(--summary-accent);
+  color: var(--ink);
   font-size: 28px;
   font-weight: 700;
 }
@@ -2938,8 +2889,9 @@ th {
 }
 .profit-grid .gain.is-loss {
   --summary-accent: var(--red);
-  background: var(--red-wash);
-  border-color: var(--red);
+}
+.profit-grid .gain.is-zero {
+  --summary-accent: var(--ink);
 }
 .pending-section {
   margin: 28px 0 36px;
@@ -3076,10 +3028,10 @@ th {
   gap: 9px;
   min-height: 42px;
   padding: 8px 13px;
-  border: 1px solid #ebd7bd;
+  border: 1px solid var(--rule);
   border-radius: 8px;
-  background: var(--amber-wash);
-  color: var(--amber);
+  background: var(--paper);
+  color: var(--ink);
   font-size: 16px;
   font-weight: 600;
 }
@@ -3091,22 +3043,21 @@ th {
   height: 24px;
   padding: 0 5px;
   border-radius: 6px;
-  background: #fff;
-  color: var(--amber);
+  background: var(--rule-soft);
+  color: var(--ink);
   font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 .review-count {
   margin-left: 8px;
-  background: var(--amber-wash);
 }
 .pill.review-pill,
 .pill.frozen-pill {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: var(--amber-wash);
-  color: var(--amber);
+  background: var(--rule-soft);
+  color: var(--secondary);
 }
 .pill.manual-approved {
   background: var(--rule-soft);
@@ -3114,13 +3065,13 @@ th {
 }
 .manual-reference {
   display: block;
-  color: var(--amber);
+  color: var(--secondary);
   font-size: 13px;
 }
 .frozen-summary {
   display: block;
   margin-top: 4px;
-  color: var(--amber);
+  color: var(--secondary);
   font-size: 14px;
   font-weight: 400;
   letter-spacing: 0;
@@ -3158,9 +3109,9 @@ th {
   flex-wrap: wrap;
   gap: 16px;
   padding: 18px;
-  border: 1px solid #ebd7bd;
+  border: 1px solid var(--rule);
   border-radius: 10px;
-  background: #fffaf4;
+  background: var(--rule-soft);
 }
 .review-record > div,
 .review-detail-banner > div {
@@ -3188,7 +3139,7 @@ th {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  color: var(--amber);
+  color: var(--secondary);
   font-size: 15px;
   line-height: 1.5;
 }
@@ -3240,8 +3191,8 @@ th {
   min-width: 0;
 }
 .review-comparison > div:last-child {
-  background: var(--green-wash);
-  border-color: #bddbce;
+  background: var(--rule-soft);
+  border-color: var(--rule);
 }
 .review-comparison span {
   color: var(--secondary);
@@ -3262,12 +3213,12 @@ th {
   flex-direction: column;
   gap: 10px;
   padding: 16px;
-  background: var(--indigo-wash);
+  background: var(--rule-soft);
   border-radius: 8px;
 }
 .review-commission-confirm > strong {
   font-size: 17px;
-  color: var(--indigo);
+  color: var(--ink);
 }
 .review-confirmation {
   align-items: flex-start;
@@ -3322,10 +3273,9 @@ th {
   gap: 16px 24px;
   margin-top: 20px;
   padding: 18px 22px;
-  border: 1px solid #ebd7bd;
-  border-left: 4px solid var(--amber);
+  border: 1px solid var(--rule);
   border-radius: 10px;
-  background: #fffaf4;
+  background: var(--rule-soft);
 }
 .review-period-copy {
   display: grid;
@@ -3335,12 +3285,12 @@ th {
   min-width: 0;
 }
 .review-period-copy > span {
-  color: var(--amber);
+  color: var(--ink);
   font-size: 18px;
   font-weight: 600;
 }
 .review-period-copy > strong {
-  color: var(--amber);
+  color: var(--ink);
   font-size: 28px;
   line-height: 1.3;
   overflow-wrap: anywhere;
@@ -3354,8 +3304,8 @@ th {
 .review-sale-footer .review-action {
   flex: 0 1 auto;
   min-height: 52px;
-  border-color: #cfa77a;
-  color: var(--amber);
+  border-color: var(--rule);
+  color: var(--ink);
   white-space: normal;
 }
 .review-action > svg {
@@ -3382,7 +3332,7 @@ th {
 }
 .review-queue-heading > strong {
   max-width: 100%;
-  color: var(--amber);
+  color: var(--ink);
   font-size: 30px;
   line-height: 1.3;
   overflow-wrap: anywhere;
@@ -3492,7 +3442,7 @@ th {
 .review-commission-fact dd strong {
   display: block;
   margin-top: 4px;
-  color: var(--amber);
+  color: var(--ink);
   font-size: 19px;
 }
 .review-sale-footer {

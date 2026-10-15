@@ -4,10 +4,10 @@ El administrador revisa tickets de empleados, registra ventas y gastos y liquida
 comisiones. La pantalla debe sentirse como una mesa de control: cifras legibles,
 folios verificables y acciones claras. Tres secciones, sin login ni gráficas.
 
-Papel blanco puro, azul de carpeta administrativa (#182d48), verde de entrada
-(#08775f), cobre de salida e índigo de comisiones. El color distingue el destino
-del dinero. Acciones grandes de Registro, captura de ticket en una franja azul y
-corte de comisiones en índigo con los folios a pagar. Sin degradados ni dibujos.
+Papel blanco puro, texto oscuro y bordes grises. La cifra de ganancia usa verde
+cuando es positiva, rojo cuando hay pérdida y tono neutro cuando es cero. El resto
+de importes, revisiones, formularios y acciones usa la misma paleta neutra. Errores
+y acciones destructivas conservan rojo. Sin colores por categoría, degradados ni dibujos.
 
 Segoe UI, base 18px, títulos de 30–34px, cifras tabulares, controles de al menos
 52px y espacios en múltiplos de 4px. Bordes definidos y estados de cobro explícitos.
@@ -27,18 +27,18 @@ muestran el intervalo con flechas para navegar; sólo el personalizado despliega
 Desde/Hasta. Liquidar comisiones abre Todas las pendientes, con todas las fechas,
 y permite acotar el periodo antes de confirmar. Las pagadas quedan fuera del pago.
 
-El Resumen destaca la ganancia en una tarjeta grande a la izquierda, con fondo
-verde que cambia a rojo cuando hay pérdida. A su derecha, tres tarjetas pequeñas
-apiladas explican el resultado: ventas (azul), gastos (cobre) y comisiones (índigo).
+El Resumen destaca la ganancia en una tarjeta grande blanca a la izquierda, con
+color sólo en la cifra. A su derecha, tres tarjetas pequeñas neutras apiladas
+explican el resultado: ventas, gastos y comisiones confirmadas.
 En móvil, la ganancia aparece primero y sus detalles debajo. Debajo del cálculo,
 «Por pagar · Todas las fechas» reúne los saldos globales de
 proveedores y empleados con menor énfasis y acceso a sus pendientes.
-La franja ámbar sólo aparece cuando hay ventas por revisar en el periodo. Separa
+La franja neutra sólo aparece cuando hay ventas por revisar en el periodo. Separa
 su importe del cálculo: no entran
 en la cuenta ni en las comisiones por pagar. El acceso lleva a la cola global,
 identificada con «Todas las fechas» y su propio importe.
 
-Las ventas manuales usan una etiqueta ámbar «Requiere revisión» y una referencia
+Las ventas manuales usan una etiqueta neutra «Requiere revisión» y una referencia
 interna identificada como tal. «Revisión» es una pestaña secundaria con contador
 global; Registro ofrece el mismo acceso sin añadir otra sección principal.
 Las fichas de revisión priorizan artículos, cantidades y precios, cliente, fecha,
@@ -50,6 +50,9 @@ confirmar la actualización. Una búsqueda sin resultado mantiene el estado.
 Las comisiones se muestran como congeladas mientras la venta sigue pendiente;
 la liquidación separa el importe congelado del que se puede pagar. Una aprobación
 manual se distingue de un ticket validado y conserva la procedencia de la captura.
+La franja indica sus comisiones en espera fuera del cálculo. En Empleados,
+«Por pagar», «Pagadas» y «Por revisar» son importes separados; las congeladas nunca
+se suman a lo autorizado por pagar ni se presentan como gasto confirmado.
 
 Las ventas se registran con cobro completo, sin apartado de crédito ni abonos de
 clientes. Los pagos parciales y saldos pendientes sólo corresponden a proveedores.

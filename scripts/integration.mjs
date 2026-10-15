@@ -1682,6 +1682,83 @@ try {
     assert.equal(state.reviewCount, before.reviewCount);
     assert.equal(state.summary.employeeFrozen, before.summary.employeeFrozen);
   });
+  await test("a pending sale with a full-value commission never creates a loss, and payment does not deduct it twice", async () => {
+    const employee = await run("employee.save", {
+      name: "Comisión completa por revisar QA",
+      phone: "",
+      position: "Técnico",
+    });
+    const date = "2004-02-15";
+    const paymentDate = "2004-02-16";
+    const period = new URLSearchParams({ from: date, to: date });
+    const before = await getState(period);
+    const saved = await reviewSale({
+      date,
+      items: [
+        {
+          description: "Venta con comisión completa QA",
+          quantity: 1,
+          unitPrice: "500",
+        },
+      ],
+      received: "500",
+      commission: { employeeId: employee.id, value: "500" },
+    });
+    let state = await getState(period);
+    assert.equal(state.summary.income, 0);
+    assert.equal(state.summary.expenses, 0);
+    assert.equal(state.summary.commissions, 0);
+    assert.equal(state.summary.profit, 0);
+    assert.equal(state.summary.pendingIncome, 50000);
+    assert.equal(state.summary.pendingCommissions, 50000);
+    assert.equal(state.summary.pendingSalesCount, 1);
+    assert.equal(state.summary.employeePayable, before.summary.employeePayable);
+    assert.equal(
+      state.summary.employeeFrozen,
+      before.summary.employeeFrozen + 50000,
+    );
+    const frozen = await payoutPreview(employee.id, "all", paymentDate);
+    assert.equal(frozen.totalCents, 0);
+    assert.equal(frozen.commissions.length, 0);
+    assert.equal(frozen.frozenCents, 50000);
+    assert.equal(frozen.frozenCount, 1);
+
+    await approve(saved.id);
+    state = await getState(period);
+    assert.equal(state.summary.income, 50000);
+    assert.equal(state.summary.commissions, 50000);
+    assert.equal(state.summary.profit, 0);
+    assert.equal(state.summary.pendingIncome, 0);
+    assert.equal(state.summary.pendingCommissions, 0);
+    assert.equal(state.summary.pendingSalesCount, 0);
+    assert.equal(
+      state.summary.employeePayable,
+      before.summary.employeePayable + 50000,
+    );
+    assert.equal(state.summary.employeeFrozen, before.summary.employeeFrozen);
+
+    const { movement } = await movementDetail(saved.id);
+    await run("commission.pay", {
+      id: movement.commission_id,
+      date: paymentDate,
+    });
+    state = await getState(period);
+    assert.equal(state.summary.income, 50000);
+    assert.equal(state.summary.commissions, 50000);
+    assert.equal(state.summary.profit, 0);
+    assert.equal(state.summary.employeePayable, before.summary.employeePayable);
+    assert.equal(state.summary.employeeFrozen, before.summary.employeeFrozen);
+    const paymentPeriod = await getState(
+      new URLSearchParams({ from: paymentDate, to: paymentDate }),
+    );
+    assert.equal(paymentPeriod.summary.commissions, 0);
+    assert.equal(paymentPeriod.summary.profit, 0);
+    assert.equal(paymentPeriod.summary.commissionPaid, 50000);
+    const paid = await payoutPreview(employee.id, "all", paymentDate);
+    assert.equal(paid.totalCents, 0);
+    assert.equal(paid.frozenCents, 0);
+    assert.equal(paid.frozenCount, 0);
+  });
   await test("frozen commissions cannot be paid individually, by IDs or by a settlement snapshot", async () => {
     const saved = await reviewSale();
     const detail = await movementDetail(saved.id);

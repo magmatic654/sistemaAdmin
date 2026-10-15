@@ -817,6 +817,7 @@ export default function Dashboard({ today }: { today: string }) {
                         className={
                           "summary-card gain" +
                           (summary!.profit < 0 ? " is-loss" : "") +
+                          (summary!.profit === 0 ? " is-zero" : "") +
                           (money(summary!.profit).length > 13
                             ? " is-long-amount"
                             : "")
@@ -877,7 +878,7 @@ export default function Dashboard({ today }: { today: string }) {
                             >
                               −
                             </span>
-                            <span>Comisiones del periodo</span>
+                            <span>Comisiones confirmadas</span>
                           </div>
                           <strong className="number">
                             {money(summary!.commissions)}
@@ -901,8 +902,14 @@ export default function Dashboard({ today }: { today: string }) {
                           {summary!.pendingSalesCount === 1
                             ? "venta del periodo"
                             : "ventas del periodo"}{" "}
-                          · No incluidas en la ganancia
+                          · Sin afectar la ganancia
                         </small>
+                        {summary!.pendingCommissions > 0 && (
+                          <small>
+                            Comisiones en espera:{" "}
+                            <b>{money(summary!.pendingCommissions)}</b>
+                          </small>
+                        )}
                       </div>
                       {!!data.reviewCount && (
                         <button
@@ -952,11 +959,6 @@ export default function Dashboard({ today }: { today: string }) {
                           <strong className="number">
                             {money(summary!.employeePayable)}
                           </strong>
-                          {!!summary!.employeeFrozen && (
-                            <small className="frozen-summary">
-                              Por revisar: {money(summary!.employeeFrozen)}
-                            </small>
-                          )}
                         </div>
                         <ChevronRight size={23} aria-hidden="true" />
                       </button>
@@ -1042,21 +1044,21 @@ export default function Dashboard({ today }: { today: string }) {
                               role="columnheader"
                               className="align-right"
                             >
-                              Comisiones
+                              Por pagar
                             </th>
                             <th
                               scope="col"
                               role="columnheader"
                               className="align-right"
                             >
-                              Pagado
+                              Pagadas
                             </th>
                             <th
                               scope="col"
                               role="columnheader"
                               className="align-right"
                             >
-                              Pendiente
+                              Por revisar
                             </th>
                             <th
                               scope="col"
@@ -1070,10 +1072,14 @@ export default function Dashboard({ today }: { today: string }) {
                             const rows = commissions.filter(
                                 (c) => c.employee_id === employee.id,
                               ),
-                              total = rows.reduce(
-                                (sum, c) => sum + c.amount_cents,
-                                0,
-                              ),
+                              payable = rows
+                                .filter(
+                                  (c) =>
+                                    !c.paid_on &&
+                                    (c.review_status === "approved" ||
+                                      c.review_status === "validated"),
+                                )
+                                .reduce((sum, c) => sum + c.amount_cents, 0),
                               paid = rows
                                 .filter((c) => c.paid_on)
                                 .reduce((sum, c) => sum + c.amount_cents, 0),
@@ -1116,29 +1122,24 @@ export default function Dashboard({ today }: { today: string }) {
                                 </td>
                                 <td
                                   role="cell"
-                                  data-label="Comisiones"
+                                  data-label="Por pagar"
                                   className="number align-right"
                                 >
-                                  {money(total)}
+                                  {money(payable)}
                                 </td>
                                 <td
                                   role="cell"
-                                  data-label="Pagado"
+                                  data-label="Pagadas"
                                   className="number align-right"
                                 >
                                   {money(paid)}
                                 </td>
                                 <td
                                   role="cell"
-                                  data-label="Pendiente"
+                                  data-label="Por revisar"
                                   className="number align-right"
                                 >
-                                  {money(total - paid)}
-                                  {!!frozen && (
-                                    <small className="frozen-summary">
-                                      {money(frozen)} congeladas
-                                    </small>
-                                  )}
+                                  {money(frozen)}
                                 </td>
                                 <td
                                   role="cell"
