@@ -51,7 +51,7 @@ export function Select({
       <button
         type="button"
         className="choice-trigger"
-        aria-labelledby={id}
+        aria-labelledby={`${id} ${id}-value`}
         aria-haspopup="listbox"
         aria-expanded={open}
         disabled={disabled}
@@ -69,7 +69,7 @@ export function Select({
           }
         }}
       >
-        <span>
+        <span id={`${id}-value`}>
           {options.find((option) => option.value === value)?.label ||
             "Seleccionar"}
         </span>
@@ -165,7 +165,7 @@ export function DatePicker({
       <button
         className="choice-trigger"
         type="button"
-        aria-labelledby={id}
+        aria-labelledby={`${id} ${id}-value`}
         aria-expanded={open}
         disabled={disabled}
         onClick={() => {
@@ -173,7 +173,7 @@ export function DatePicker({
           setOpen(!open);
         }}
       >
-        <span>{shortDate(value)}</span>
+        <span id={`${id}-value`}>{shortDate(value)}</span>
         <CalendarDays size={16} />
       </button>
       {open && (

@@ -43,7 +43,8 @@ import {
 } from "./forms";
 
 type Section = "registro" | "resumen" | "empleados";
-type Panel = "ventas" | "salidas" | "proveedores" | "comisiones" | "revision";
+type Panel = "ventas" | "salidas" | "comisiones";
+type SummaryView = "ganancia" | "pagos" | "historial" | "revision";
 type Dialog = {
   type:
     | "entrada"
@@ -69,9 +70,7 @@ const sections = [
 const panels = [
   { id: "ventas" as const, label: "Ventas" },
   { id: "salidas" as const, label: "Gastos" },
-  { id: "proveedores" as const, label: "Proveedores" },
   { id: "comisiones" as const, label: "Comisiones" },
-  { id: "revision" as const, label: "Por revisar" },
 ];
 
 function Status({ m }: { m: Movement }) {
@@ -105,15 +104,25 @@ function Status({ m }: { m: Movement }) {
 
 export default function Dashboard({ today }: { today: string }) {
   const [section, setSection] = useState<Section>("registro"),
-    [panel, setPanel] = useState<Panel>("ventas");
-  const [selection, setSelection] = useState<PeriodSelection>({
+    [summaryView, setSummaryView] = useState<SummaryView>("ganancia"),
+    [panel, setPanel] = useState<Panel>("ventas"),
+    [payee, setPayee] = useState<"empleados" | "proveedores">("empleados");
+  const [summarySelection, setSummarySelection] = useState<PeriodSelection>({
+      period: "day",
+      anchor: today,
+      from: today,
+      to: today,
+    }),
+    [employeeSelection, setEmployeeSelection] = useState<PeriodSelection>({
       period: "day",
       anchor: today,
       from: today,
       to: today,
     }),
     [page, setPage] = useState(1);
+  const selection = section === "empleados" ? employeeSelection : summarySelection;
   const [data, setData] = useState<AdminState | null>(null),
+    [dataKey, setDataKey] = useState(""),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(""),
     [refresh, setRefresh] = useState(0);
@@ -133,19 +142,23 @@ export default function Dashboard({ today }: { today: string }) {
     [selection],
   );
   const fetchId = useRef(0);
-  const historyRef = useRef<HTMLHeadingElement>(null);
-  const view =
-    section === "empleados"
-      ? "comisiones"
-      : panel === "ventas"
-        ? "entradas"
-        : panel === "revision"
-          ? "revision"
-          : panel === "salidas"
-            ? "salidas"
-            : panel === "comisiones"
-              ? "comisiones-pendientes"
-              : "proveedores";
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  let view = "entradas";
+  if (section === "empleados") view = "comisiones";
+  else if (section === "resumen") {
+    if (summaryView === "revision") view = "revision";
+    else if (summaryView === "pagos")
+      view = payee === "empleados" ? "comisiones-pendientes" : "proveedores";
+    else if (summaryView === "historial")
+      view = { ventas: "entradas", salidas: "salidas", comisiones: "comisiones" }[panel];
+  }
+  const globalView =
+    section === "resumen" && (summaryView === "pagos" || summaryView === "revision");
+  const queryRange = globalView
+    ? { from: "2000-01-01", to: "2100-12-31" }
+    : range;
+  const queryKey = [view, queryRange.from, queryRange.to, page].join(":");
   useEffect(() => {
     const value = new URL(window.location.href).searchParams.get("seccion");
     if (value === "resumen" || value === "empleados") setSection(value);
@@ -160,26 +173,24 @@ export default function Dashboard({ today }: { today: string }) {
     };
   }, []);
   useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(""), 5000);
-    return () => clearTimeout(timer);
-  }, [toast]);
-  useEffect(() => {
     const controller = new AbortController(),
       id = ++fetchId.current;
     setLoading(true);
     setError("");
     const params = new URLSearchParams({
       view,
-      from: range.from,
-      to: range.to,
+      from: queryRange.from,
+      to: queryRange.to,
       page: String(page),
     });
     void fetch("/api/admin?" + params, { signal: controller.signal })
       .then(async (response) => {
         const result = await response.json();
         if (!response.ok) throw Error(result.error);
-        if (id === fetchId.current) setData(result);
+        if (id === fetchId.current) {
+          setData(result);
+          setDataKey(queryKey);
+        }
       })
       .catch((error) => {
         if (error.name !== "AbortError" && id === fetchId.current)
@@ -189,19 +200,19 @@ export default function Dashboard({ today }: { today: string }) {
         if (id === fetchId.current) setLoading(false);
       });
     return () => controller.abort();
-  }, [view, range.from, range.to, page, refresh]);
+  }, [view, queryRange.from, queryRange.to, queryKey, page, refresh]);
   function navigate(value: Section) {
     setSection(value);
     setPage(1);
     window.history.replaceState(null, "", "?seccion=" + value);
   }
-  function choosePanel(value: Panel, reveal = false) {
-    setPanel(value);
+  function chooseSummary(value: SummaryView, reveal = false) {
+    setSummaryView(value);
     setPage(1);
     if (reveal) {
       window.requestAnimationFrame(() => {
-        historyRef.current?.focus({ preventScroll: true });
-        historyRef.current?.scrollIntoView({
+        summaryRef.current?.focus({ preventScroll: true });
+        summaryRef.current?.scrollIntoView({
           block: "start",
           behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
             .matches
@@ -226,10 +237,13 @@ export default function Dashboard({ today }: { today: string }) {
       setWriting(false);
     }
   }, []);
-  function saved() {
+  function saved(message = "Registro guardado") {
     setDialog(null);
     setRefresh((n) => n + 1);
-    setToast("Guardado");
+    setToast(message);
+    window.requestAnimationFrame(() =>
+      noticeRef.current?.scrollIntoView({ block: "nearest" }),
+    );
   }
   async function removeEmployee(employee: Employee) {
     try {
@@ -269,7 +283,7 @@ export default function Dashboard({ today }: { today: string }) {
           <table
             className={
               "responsive-table movement-table" +
-              (panel === "proveedores" ? " balance-table" : "")
+              (view === "proveedores" ? " balance-table" : "")
             }
             role="table"
           >
@@ -279,13 +293,13 @@ export default function Dashboard({ today }: { today: string }) {
                   Fecha
                 </th>
                 <th scope="col" role="columnheader">
-                  {panel === "proveedores" ? "Proveedor" : "Concepto"}
+                  {view === "proveedores" ? "Proveedor" : "Concepto"}
                 </th>
                 <th scope="col" role="columnheader">
                   Estado
                 </th>
                 <th scope="col" role="columnheader" className="align-right">
-                  {panel === "proveedores" ? "Pendiente" : "Importe"}
+                  {view === "proveedores" ? "Pendiente" : "Importe"}
                 </th>
                 <th scope="col" role="columnheader" aria-label="Acciones" />
               </tr>
@@ -295,24 +309,24 @@ export default function Dashboard({ today }: { today: string }) {
                 <tr key={m.id} role="row">
                   <td role="cell" data-label="Fecha" className="mobile-wide">
                     {shortDate(m.date)}
-                    {m.source_folio && <small>Ticket {m.source_folio}</small>}
+                    {m.source_folio && !m.source_folio.startsWith("MAN-") && <small>Ticket {m.source_folio}</small>}
                   </td>
                   <td
                     role="cell"
                     data-label={
-                      panel === "proveedores" ? "Proveedor" : "Concepto"
+                      view === "proveedores" ? "Proveedor" : "Concepto"
                     }
                     className="concept-cell mobile-wide"
                   >
                     <button className="row-link" onClick={() => void detail(m)}>
-                      {panel === "proveedores"
+                      {view === "proveedores"
                         ? m.contact || m.concept
                         : m.kind === "entrada"
                           ? m.items[0]?.description || m.concept
                           : m.concept}
                     </button>
                     <small>
-                      {panel === "proveedores" ? m.concept : m.contact}
+                      {view === "proveedores" ? m.concept : m.contact}
                       {m.kind === "entrada" && m.items.length > 1 && (
                         <span className="movement-more-items">
                           + {m.items.length - 1} artículo
@@ -327,14 +341,14 @@ export default function Dashboard({ today }: { today: string }) {
                   <td
                     role="cell"
                     data-label={
-                      panel === "proveedores" ? "Pendiente" : "Importe"
+                      view === "proveedores" ? "Pendiente" : "Importe"
                     }
                     className={
                       "number align-right " + (m.voided_at ? "muted" : "")
                     }
                   >
                     {money(
-                      panel === "proveedores"
+                      view === "proveedores"
                         ? m.total_cents - m.paid_cents
                         : m.total_cents,
                     )}
@@ -345,7 +359,7 @@ export default function Dashboard({ today }: { today: string }) {
                     aria-label="Acciones"
                     className="align-right mobile-wide"
                   >
-                    {panel === "proveedores" ? (
+                    {view === "proveedores" ? (
                       <button
                         className="button secondary small"
                         onClick={() =>
@@ -519,6 +533,40 @@ export default function Dashboard({ today }: { today: string }) {
         )}
         {pageControls()}
       </section>
+    );
+  }
+
+  function employeePayables() {
+    const balances = new Map<string, { name: string; amount: number; count: number }>();
+    for (const commission of commissions) {
+      if (
+        commission.paid_on || commission.source_cancelled ||
+        (commission.review_status !== "approved" && commission.review_status !== "validated")
+      ) continue;
+      const balance = balances.get(commission.employee_id) || {
+        name: commission.employee_name, amount: 0, count: 0,
+      };
+      balance.amount += commission.amount_cents;
+      balance.count += 1;
+      balances.set(commission.employee_id, balance);
+    }
+    return (
+      <div className="employee-payment-list">
+        {[...balances].sort((a, b) => a[1].name.localeCompare(b[1].name, "es")).map(([id, balance]) => (
+          <article className="employee-payment-row" key={id}>
+            <div>
+              <h3>{balance.name}</h3>
+              <p>{balance.count} {balance.count === 1 ? "comisión" : "comisiones"}</p>
+            </div>
+            <strong className="number">{money(balance.amount)}</strong>
+            <button className="button primary" disabled={loading} aria-label={`Pagar a ${balance.name}`}
+              onClick={() => setDialog({ type: "payout", id })}>
+              Pagar
+            </button>
+          </article>
+        ))}
+        {!balances.size && <div className="empty">Sin comisiones por pagar</div>}
+      </div>
     );
   }
 
@@ -701,19 +749,29 @@ export default function Dashboard({ today }: { today: string }) {
           {section === "registro" && (
             <span className="date-stamp">{shortDate(today)}</span>
           )}
-          {section === "registro" && !!data?.reviewCount && (
+          {(section === "registro" || (section === "resumen" && summaryView !== "revision")) && !!data?.reviewCount && (
             <button
               className="review-shortcut"
+              aria-label={`Revisar ${data.reviewCount} ${data.reviewCount === 1 ? "venta" : "ventas"}`}
               onClick={() => {
                 navigate("resumen");
-                choosePanel("revision", true);
+                chooseSummary("revision", true);
               }}
             >
               <ClipboardCheck size={19} />
-              Por revisar <strong>{data.reviewCount}</strong>
+              Revisar {data.reviewCount}
             </button>
           )}
         </div>
+        {toast && (
+          <div className="save-notice" role="status" ref={noticeRef}>
+            <Check size={22} aria-hidden="true" />
+            <span>{toast}</span>
+            <button className="icon-button" aria-label="Cerrar aviso" onClick={() => setToast("")}>
+              <X size={22} />
+            </button>
+          </div>
+        )}
         {error && (
           <div className="error" role="alert">
             {error}
@@ -769,7 +827,10 @@ export default function Dashboard({ today }: { today: string }) {
             <div className="registration-links">
               <button
                 className="text-button"
-                onClick={() => navigate("resumen")}
+                onClick={() => {
+                  navigate("resumen");
+                  chooseSummary("historial");
+                }}
               >
                 <ReceiptText size={21} />
                 Ver movimientos
@@ -787,16 +848,59 @@ export default function Dashboard({ today }: { today: string }) {
             </div>
           </div>
         )}
-        {section !== "registro" && (
+        {section === "resumen" && (
+          <div className="summary-workspace" ref={summaryRef} tabIndex={-1}>
+            <Select
+              label="Ver"
+              value={summaryView}
+              onChange={(value) => chooseSummary(value as SummaryView)}
+              options={[
+                { value: "ganancia", label: "Ganancia" },
+                { value: "pagos", label: "Pagos pendientes" },
+                { value: "historial", label: "Historial" },
+                ...(data?.reviewCount || summaryView === "revision"
+                  ? [{ value: "revision", label: "Ventas por revisar" }] : []),
+              ]}
+            />
+            {summaryView === "historial" && (
+              <Select
+                label="Tipo de registro"
+                value={panel}
+                onChange={(value) => {
+                  setPanel(value as Panel);
+                  setPage(1);
+                }}
+                options={panels.map((item) => ({ value: item.id, label: item.label }))}
+              />
+            )}
+            {summaryView === "pagos" && (
+              <Select
+                label="Pagar a"
+                value={payee}
+                onChange={(value) => {
+                  setPayee(value as typeof payee);
+                  setPage(1);
+                }}
+                options={[
+                  { value: "empleados", label: "Empleados" },
+                  { value: "proveedores", label: "Proveedores" },
+                ]}
+              />
+            )}
+          </div>
+        )}
+        {(section === "empleados" || (section === "resumen" && !globalView)) && (
           <PeriodControls
             value={selection}
+            today={today}
             onChange={(value) => {
-              setSelection(value);
+              if (section === "empleados") setEmployeeSelection(value);
+              else setSummarySelection(value);
               setPage(1);
             }}
           />
         )}
-        {loading && !data ? (
+        {!data || dataKey !== queryKey ? (
           <div className="loading-state" role="status">
             Cargando…
           </div>
@@ -808,6 +912,8 @@ export default function Dashboard({ today }: { today: string }) {
             >
               {section === "resumen" && (
                 <>
+                  {summaryView === "ganancia" && (
+                    <>
                   <section
                     className="profit-section"
                     aria-label="Cálculo de ganancia del periodo"
@@ -878,7 +984,7 @@ export default function Dashboard({ today }: { today: string }) {
                             >
                               −
                             </span>
-                            <span>Comisiones confirmadas</span>
+                            <span>Comisiones de estas ventas</span>
                           </div>
                           <strong className="number">
                             {money(summary!.commissions)}
@@ -911,101 +1017,33 @@ export default function Dashboard({ today }: { today: string }) {
                           </small>
                         )}
                       </div>
-                      {!!data.reviewCount && (
-                        <button
-                          className="button secondary review-action"
-                          onClick={() => choosePanel("revision", true)}
-                        >
-                          Revisar ventas
-                          <ChevronRight size={21} aria-hidden="true" />
-                        </button>
-                      )}
                     </section>
                   )}
-                  <section
-                    className="pending-section"
-                    aria-label="Saldos pendientes de todas las fechas"
-                  >
-                    <div className="pending-heading">
-                      <h2>Por pagar</h2>
-                      <span>Todas las fechas</span>
-                    </div>
-                    <div className="pending-grid">
-                      <button
-                        className="summary-card supplier-due"
-                        aria-label={
-                          "Por pagar a proveedores: " + money(summary!.payable)
-                        }
-                        onClick={() => choosePanel("proveedores", true)}
-                      >
-                        <div className="pending-card-content">
-                          <span>Proveedores</span>
-                          <strong className="number">
-                            {money(summary!.payable)}
-                          </strong>
+                    </>
+                  )}
+                  {summaryView === "revision" && reviewList()}
+                  {summaryView === "historial" && (
+                    <section aria-label="Historial del periodo">
+                      {panel === "comisiones" ? commissionTable() : movementTable()}
+                    </section>
+                  )}
+                  {summaryView === "pagos" && (
+                    <section className="payments-workspace" aria-label="Pagos pendientes de todas las fechas">
+                      <div className="payment-heading">
+                        <div>
+                          <h2>{payee === "empleados" ? "Falta pagar a empleados" : "Falta pagar a proveedores"}</h2>
+                          <p>Todas las fechas</p>
                         </div>
-                        <ChevronRight size={23} aria-hidden="true" />
-                      </button>
-                      <button
-                        className="summary-card employee-due"
-                        aria-label={
-                          "Comisiones por pagar: " +
-                          money(summary!.employeePayable)
-                        }
-                        onClick={() => choosePanel("comisiones", true)}
-                      >
-                        <div className="pending-card-content">
-                          <span>Comisiones autorizadas</span>
-                          <strong className="number">
-                            {money(summary!.employeePayable)}
-                          </strong>
-                        </div>
-                        <ChevronRight size={23} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </section>
-                  <div className="history-header">
-                    <h2
-                      className="history-title"
-                      tabIndex={-1}
-                      ref={historyRef}
-                    >
-                      Historial
-                    </h2>
-                    <div className="history-tabs">
-                      {panels.map((item) => (
-                        <button
-                          key={item.id}
-                          className={panel === item.id ? "active" : ""}
-                          onClick={() => choosePanel(item.id)}
-                        >
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {panel === "revision"
-                    ? reviewList()
-                    : panel === "comisiones"
-                      ? commissionTable()
-                      : movementTable()}
+                        <strong className="number">{money(payee === "empleados" ? summary!.employeePayable : summary!.payable)}</strong>
+                      </div>
+                      {payee === "empleados" ? employeePayables() : movementTable()}
+                    </section>
+                  )}
                 </>
               )}
               {section === "empleados" && (
                 <>
                   <div className="employee-toolbar">
-                    <Select
-                      label="Ver comisiones de"
-                      value={employeeId}
-                      onChange={setEmployeeId}
-                      options={[
-                        { value: "", label: "Todos los empleados" },
-                        ...employees.map((e) => ({
-                          value: e.id,
-                          label: e.name,
-                        })),
-                      ]}
-                    />
                     <button
                       className="button primary payout-button"
                       disabled={!data.employees.length}
@@ -1014,7 +1052,7 @@ export default function Dashboard({ today }: { today: string }) {
                       }
                     >
                       <Banknote size={22} />
-                      Liquidar comisiones
+                      Pagar comisiones
                     </button>
                     <label className="check-label">
                       <input
@@ -1184,7 +1222,10 @@ export default function Dashboard({ today }: { today: string }) {
                   </div>
                   {selectedEmployee && (
                     <section className="employee-detail">
-                      <h2>{selectedEmployee.name}</h2>
+                      <div className="employee-detail-heading">
+                        <h2>{selectedEmployee.name}</h2>
+                        <button className="text-button" onClick={() => setEmployeeId("")}>Cerrar detalle</button>
+                      </div>
                       {commissionTable(selectedEmployee.id)}
                     </section>
                   )}
@@ -1194,19 +1235,6 @@ export default function Dashboard({ today }: { today: string }) {
           )
         )}
       </main>
-      {toast && (
-        <div className="toast" role="status">
-          <Check size={22} />
-          {toast}
-          <button
-            className="icon-button"
-            aria-label="Cerrar"
-            onClick={() => setToast("")}
-          >
-            <X size={20} />
-          </button>
-        </div>
-      )}
       {dialog && data && (
         <Modal
           title={title}
@@ -1285,10 +1313,7 @@ export default function Dashboard({ today }: { today: string }) {
               initialPeriod="all"
               initialAnchor={today}
               write={write}
-              onDone={() => {
-                saved();
-                setToast("Comisiones pagadas");
-              }}
+              onDone={saved}
               onClose={() => setDialog(null)}
             />
           )}

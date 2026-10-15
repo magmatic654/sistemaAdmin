@@ -220,7 +220,7 @@ h3 {
   border-color: var(--tertiary);
 }
 .button.small {
-  min-height: 43px;
+  min-height: 48px;
   font-size: 16px;
   padding: 8px 16px;
 }
@@ -231,8 +231,8 @@ h3 {
   border: 0;
   background: transparent;
   border-radius: 6px;
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   flex: none;
   color: var(--secondary);
 }
@@ -249,6 +249,7 @@ h3 {
   font-size: 16px;
   font-weight: 600;
   color: var(--ink);
+  min-height: 48px;
 }
 .text-button:hover {
   text-decoration: underline;
@@ -785,7 +786,7 @@ label small {
   color: var(--tertiary);
 }
 .calendar-grid button {
-  min-height: 34px;
+  min-height: 48px;
   border: 0;
   border-radius: 4px;
   background: #fff;
@@ -1407,7 +1408,7 @@ label small {
     z-index: 130;
   }
   .calendar-grid button {
-    min-height: 36px;
+    min-height: 48px;
   }
   .toast {
     width: calc(100vw - 32px);
@@ -2394,11 +2395,11 @@ th {
 .period-selector {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   flex-wrap: wrap;
-  gap: 18px 24px;
-  padding-bottom: 24px;
-  margin-bottom: 28px;
+  gap: 12px 20px;
+  padding-bottom: 20px;
+  margin-bottom: 24px;
   border-bottom: 1px solid var(--rule);
 }
 .period-options {
@@ -2433,6 +2434,7 @@ th {
   gap: 10px;
 }
 .period-interval > span {
+  min-width: 0;
   text-align: center;
   font-size: 17px;
   font-weight: 600;
@@ -3546,5 +3548,230 @@ th {
   }
   .review-decisions > .button {
     flex-basis: 100%;
+  }
+}
+
+/* One task at a time: results, outstanding payments, or records. */
+.summary-workspace {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin-bottom: 20px;
+  scroll-margin-top: 16px;
+}
+.review-shortcut {
+  min-height: 48px;
+}
+.summary-workspace > .choice,
+.period-selector > .choice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  flex: 0 1 340px;
+  min-width: 0;
+}
+.summary-workspace .field-label,
+.period-selector > .choice .field-label {
+  margin: 0;
+  color: var(--secondary);
+  font-size: 16px;
+}
+.summary-workspace .choice-trigger,
+.period-selector > .choice .choice-trigger {
+  min-height: 52px;
+  padding-block: 10px;
+  border-color: var(--rule);
+}
+.period-selector > .choice {
+  flex-basis: 300px;
+}
+.period-selector > .choice .choice-trigger span {
+  white-space: normal;
+  overflow: visible;
+}
+.period-selector .period-return-today {
+  min-height: 48px;
+  padding: 10px 16px;
+}
+.save-notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--rule-soft);
+  scroll-margin-top: 16px;
+}
+.save-notice > svg {
+  flex: none;
+}
+.save-notice > span {
+  flex: 1;
+  min-width: 0;
+}
+.payment-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 24px 0;
+}
+.payment-heading > div {
+  min-width: 0;
+}
+.payment-heading h2 {
+  font-size: 24px;
+}
+.payment-heading p,
+.employee-payment-row p {
+  color: var(--secondary);
+  font-size: 16px;
+}
+.payment-heading > strong {
+  max-width: 100%;
+  font-size: 36px;
+  line-height: 1.2;
+}
+.employee-payment-list {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+}
+.employee-payment-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) auto;
+  align-items: center;
+  gap: 16px 24px;
+  padding: 20px 24px;
+}
+.employee-payment-row + .employee-payment-row {
+  border-top: 1px solid var(--rule);
+}
+.employee-payment-row > strong {
+  font-size: 26px;
+  text-align: right;
+}
+.employee-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.pagination > div,
+.row-actions {
+  gap: 12px;
+}
+.row-link {
+  min-height: 48px;
+}
+@media (max-width: 760px) {
+  .app-header {
+    height: auto;
+    min-height: 0;
+    padding: 12px 16px 0;
+    gap: 8px;
+  }
+  .app-brand {
+    font-size: 20px;
+    gap: 8px;
+  }
+  .brand-mark {
+    width: 38px;
+    height: 40px;
+  }
+  .main-content {
+    padding: 20px 16px 40px;
+  }
+  .page-heading {
+    gap: 12px;
+    margin-bottom: 16px;
+    align-items: center;
+  }
+  .summary-workspace {
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .summary-workspace > .choice,
+  .period-selector > .choice {
+    flex-basis: 100%;
+    width: 100%;
+  }
+  .period-selector {
+    gap: 8px;
+    padding-bottom: 16px;
+    margin-bottom: 16px;
+  }
+  .period-interval {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .period-interval > span {
+    font-size: 16px;
+    flex: 1;
+  }
+  .period-custom {
+    width: 100%;
+  }
+  .period-custom .choice-trigger {
+    min-height: 48px;
+    font-size: 16px;
+  }
+  .profit-grid .gain {
+    min-height: 160px;
+    padding: 20px;
+    gap: 12px;
+  }
+  .profit-details .summary-card {
+    padding: 12px 16px;
+  }
+  .save-notice {
+    gap: 8px;
+    padding: 8px 12px;
+    font-size: 17px;
+  }
+  .payment-heading {
+    margin: 20px 0;
+  }
+  .payment-heading h2 {
+    font-size: 22px;
+  }
+  .payment-heading > strong {
+    font-size: 32px;
+  }
+  .employee-payment-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding: 16px;
+    gap: 12px;
+  }
+  .employee-payment-row > div {
+    grid-column: 1 / -1;
+  }
+  .employee-payment-row > strong {
+    text-align: left;
+  }
+}
+@media (max-width: 480px) {
+  .app-header nav {
+    margin-top: 4px;
+  }
+  .app-header nav button {
+    min-height: 52px;
+    padding: 8px 0;
+    font-size: 16px;
+  }
+  .app-header nav button span {
+    white-space: nowrap;
+  }
+  .app-header nav button svg {
+    display: none;
+  }
+  .period-custom {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

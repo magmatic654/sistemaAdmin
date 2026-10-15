@@ -100,11 +100,12 @@ export type Write = (
   payload: unknown,
   requestId: string,
 ) => Promise<unknown>;
-function useSubmit(write: Write, onDone: () => void) {
+type Saved = (message?: string) => void;
+function useSubmit(write: Write, onDone: Saved) {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
   const retry = useRef({ body: "", id: "" });
-  async function submit(action: string, payload: unknown) {
+  async function submit(action: string, payload: unknown, message?: string) {
     if (busy) return;
     setBusy(true);
     setError("");
@@ -113,7 +114,7 @@ function useSubmit(write: Write, onDone: () => void) {
       retry.current = { body, id: crypto.randomUUID() };
     try {
       await write(action, payload, retry.current.id);
-      onDone();
+      onDone(message);
     } catch (error) {
       setError((error as Error).message);
       setBusy(false);
@@ -252,7 +253,7 @@ export function ManualSaleForm({
 }: {
   employees: Employee[];
   write: Write;
-  onDone: () => void;
+  onDone: Saved;
   onClose: () => void;
 }) {
   const [description, setDescription] = useState(""),
@@ -282,19 +283,23 @@ export function ManualSaleForm({
   const { busy, error, submit } = useSubmit(write, onDone);
   function save(event: FormEvent) {
     event.preventDefault();
-    void submit("sale.manual.create", {
-      description,
-      quantity,
-      unitPrice,
-      method: paymentMethod,
-      contact,
-      commission: withCommission
-        ? {
-            employeeId,
-            value: amount,
-          }
-        : null,
-    });
+    void submit(
+      "sale.manual.create",
+      {
+        description,
+        quantity,
+        unitPrice,
+        method: paymentMethod,
+        contact,
+        commission: withCommission
+          ? {
+              employeeId,
+              value: amount,
+            }
+          : null,
+      },
+      `Venta de ${money(total || 0)} guardada para revisión`,
+    );
   }
   return (
     <form
@@ -499,7 +504,7 @@ export function MovementForm({
   suppliers: Supplier[];
   providerNames: string[];
   write: Write;
-  onDone: () => void;
+  onDone: Saved;
   onClose: () => void;
 }) {
   const today = businessToday();
@@ -556,36 +561,42 @@ export function MovementForm({
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const f = new FormData(event.currentTarget);
-    void submit("movement.create", {
-      kind,
-      date: recordDate,
-      paymentDate:
-        kind === "salida" && partial
-          ? paymentDate < recordDate
-            ? recordDate
-            : paymentDate
-          : recordDate,
-      contact,
-      phone: source?.phone || f.get("phone") || "",
-      manual: kind === "entrada" && !source,
-      folio: f.get("folio"),
-      origin: manualOrigin,
-      manualTicketCode: f.get("manualTicketCode"),
-      category,
-      concept: concept || items[0].description,
-      ticketCode: f.get("ticketCode"),
-      useTicketData: !!source,
-      items,
-      vatIncluded,
-      method,
-      supplierId: supplierId || undefined,
-      reference: f.get("reference"),
-      notes: f.get("notes"),
-      received:
-        kind === "salida" && partial ? received : (total / 100).toFixed(2),
-      commission,
-      source: source ? { kind: source.kind, id: source.id } : undefined,
-    });
+    void submit(
+      "movement.create",
+      {
+        kind,
+        date: recordDate,
+        paymentDate:
+          kind === "salida" && partial
+            ? paymentDate < recordDate
+              ? recordDate
+              : paymentDate
+            : recordDate,
+        contact,
+        phone: source?.phone || f.get("phone") || "",
+        manual: kind === "entrada" && !source,
+        folio: f.get("folio"),
+        origin: manualOrigin,
+        manualTicketCode: f.get("manualTicketCode"),
+        category,
+        concept: concept || items[0].description,
+        ticketCode: f.get("ticketCode"),
+        useTicketData: !!source,
+        items,
+        vatIncluded,
+        method,
+        supplierId: supplierId || undefined,
+        reference: f.get("reference"),
+        notes: f.get("notes"),
+        received:
+          kind === "salida" && partial ? received : (total / 100).toFixed(2),
+        commission,
+        source: source ? { kind: source.kind, id: source.id } : undefined,
+      },
+      kind === "entrada"
+        ? `Venta de ${money(total)} ${source ? "registrada" : "guardada para revisión"}`
+        : `Gasto de ${money(total)} registrado`,
+    );
   }
   return (
     <form
@@ -1111,7 +1122,7 @@ export function SaleReviewForm({
 }: {
   movement: Movement;
   write: Write;
-  onDone: () => void;
+  onDone: Saved;
   onClose: () => void;
 }) {
   const [source, setSource] = useState<Sale | null>(null),
@@ -1334,6 +1345,9 @@ export function SaleReviewForm({
                       }
                     : {}),
                 },
+                source
+                  ? `Venta validada por ${money(source.totalCents)}`
+                  : `Venta de ${money(movement.total_cents)} aprobada`,
               );
             }}
           >
@@ -1424,7 +1438,7 @@ export function MasterForm({
   kind: "employee" | "supplier";
   initial?: Employee | Supplier;
   write: Write;
-  onDone: () => void;
+  onDone: Saved;
   onClose: () => void;
 }) {
   const supplier = initial as Supplier | undefined;
@@ -1436,12 +1450,16 @@ export function MasterForm({
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const f = new FormData(event.currentTarget);
-    void submit(kind + ".save", {
-      ...Object.fromEntries(f),
-      id: initial?.id,
-      category,
-      method,
-    });
+    void submit(
+      kind + ".save",
+      {
+        ...Object.fromEntries(f),
+        id: initial?.id,
+        category,
+        method,
+      },
+      `${kind === "employee" ? "Empleado" : "Proveedor"} ${String(f.get("name") || "").trim()} ${initial ? "actualizado" : "agregado"}`,
+    );
   }
   return (
     <form onSubmit={save}>
@@ -1537,7 +1555,7 @@ export function PaymentForm({
 }: {
   movement: Movement;
   write: Write;
-  onDone: () => void;
+  onDone: Saved;
   onClose: () => void;
 }) {
   const [date, setDate] = useState(businessToday()),
@@ -1557,12 +1575,17 @@ export function PaymentForm({
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void submit("payment.create", {
-          ...Object.fromEntries(new FormData(event.currentTarget)),
-          movementId: movement.id,
-          date,
-          method,
-        });
+        const values = new FormData(event.currentTarget);
+        void submit(
+          "payment.create",
+          {
+            ...Object.fromEntries(values),
+            movementId: movement.id,
+            date,
+            method,
+          },
+          `Pagaste ${money(Math.round(Number(values.get("amount")) * 100))} a ${movement.contact || movement.concept}`,
+        );
       }}
     >
       <div className="modal-body">
@@ -1634,7 +1657,7 @@ export function PayoutForm({
   initialFrom?: string;
   initialTo?: string;
   write: Write;
-  onDone: () => void;
+  onDone: Saved;
   onClose: () => void;
 }) {
   const [employeeId, setEmployeeId] = useState(initialEmployeeId || "");
@@ -1700,15 +1723,19 @@ export function PayoutForm({
       onSubmit={(event) => {
         event.preventDefault();
         if (!current?.commissions.length || loading) return;
-        void submit("commission.batchPay", {
-          employeeId,
-          period,
-          anchor,
-          from,
-          to,
-          snapshot: current.snapshot,
-          expectedTotalCents: current.totalCents,
-        });
+        void submit(
+          "commission.batchPay",
+          {
+            employeeId,
+            period,
+            anchor,
+            from,
+            to,
+            snapshot: current.snapshot,
+            expectedTotalCents: current.totalCents,
+          },
+          `Pagaste ${money(current.totalCents)} a ${employees.find((employee) => employee.id === employeeId)?.name || "este empleado"}`,
+        );
       }}
     >
       <div className="modal-body">
@@ -1729,18 +1756,7 @@ export function PayoutForm({
           <div className="payout-summary">
             <Wallet size={30} />
             <div>
-              <span>
-                {period === "all" ? (
-                  "Todas las pendientes"
-                ) : range ? (
-                  <>
-                    {shortDate(range.from)}
-                    {range.from !== range.to ? " — " + shortDate(range.to) : ""}
-                  </>
-                ) : (
-                  "Selecciona un rango válido"
-                )}
-              </span>
+              <span>Total a pagar</span>
               <strong className="number">
                 {loading ? "…" : money(current?.totalCents || 0)}
               </strong>
@@ -1757,8 +1773,8 @@ export function PayoutForm({
             <div className="review-commission-note">
               <LockKeyhole size={18} />
               {current.frozenCount}{" "}
-              {current.frozenCount === 1 ? "congelada" : "congeladas"} ·{" "}
-              {money(current.frozenCents)}. Revisa sus ventas para liberarlas.
+              {current.frozenCount === 1 ? "comisión por revisar" : "comisiones por revisar"} ·{" "}
+              {money(current.frozenCents)}
             </div>
           )}
           {current && (
@@ -1766,8 +1782,10 @@ export function PayoutForm({
               {current.commissions.map((c) => (
                 <div key={c.id}>
                   <span>
-                    <strong>{c.source_folio || c.concept}</strong>
-                    <small>{shortDate(c.date)}</small>
+                    <strong>{c.concept}</strong>
+                    <small>
+                      {shortDate(c.date)} · {c.contact || "Público general"}
+                    </small>
                   </span>
                   <strong className="number">{money(c.amount_cents)}</strong>
                 </div>
@@ -1815,7 +1833,7 @@ export function ConfirmForm({
   action: "commission.pay" | "movement.void";
   entityId: string;
   write: Write;
-  onDone: () => void;
+  onDone: Saved;
   onClose: () => void;
 }) {
   const [date, setDate] = useState(businessToday());
@@ -1824,11 +1842,15 @@ export function ConfirmForm({
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        void submit(action, {
-          id: entityId,
-          date,
-          ...Object.fromEntries(new FormData(event.currentTarget)),
-        });
+        void submit(
+          action,
+          {
+            id: entityId,
+            date,
+            ...Object.fromEntries(new FormData(event.currentTarget)),
+          },
+          action === "commission.pay" ? "Comisión pagada" : "Registro anulado",
+        );
       }}
     >
       <div className="modal-body">

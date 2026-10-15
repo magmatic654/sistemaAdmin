@@ -28,6 +28,17 @@
 - Ocultar la franja de ventas por revisar si el periodo no contiene pendientes.
   En Resumen, destacar ganancia grande y agrupar ventas, gastos y comisiones como
   detalles pequeños a su lado; en móvil, ganancia primero y detalles debajo.
+- Resumen muestra una tarea a la vez mediante Ver: Ganancia, Pagos pendientes,
+  Historial y Ventas por revisar (sólo si hay pendientes o se está consultando esa cola).
+  No apilar las cuatro vistas. Pagos y revisión abarcan todas las fechas y no muestran
+  filtros de periodo; ganancia e historial comparten su periodo. Empleados conserva
+  una selección independiente. Agrupar pagos de comisiones por empleado.
+- Usar un único selector de periodo con flechas cercanas y Volver a hoy para consultas
+  históricas. Al elegir Hoy/Esta semana/Este mes, partir de la fecha comercial actual.
+  Mantener navegación con áreas de 48 × 48 px y acciones principales de al menos 48 px de alto;
+  no reducir letra o botones para compactar la cabecera móvil.
+- Confirmar guardados y pagos con importe/destinatario cuando corresponda. El aviso
+  permanece en el flujo de la página hasta cerrarlo; no tapar botones con avisos flotantes.
 - Mostrar producto, cantidad, precios, cliente, fecha, pago y comisión antes de
   pedir una decisión de revisión. Dejar códigos y referencias internas en un
   desplegable secundario; no usarlos como nombre de una venta en las listas.
