@@ -617,42 +617,108 @@ export default function Dashboard({ today }: { today: string }) {
             >
               {section === "resumen" && (
                 <>
-                  <div className="summary-grid">
-                    <div className="summary-card gain">
-                      <span>Ganancia</span>
-                      <strong
+                  <section
+                    className="profit-section"
+                    aria-label="Cálculo de ganancia del periodo"
+                  >
+                    <div className="summary-grid profit-grid">
+                      <div className="summary-card collected">
+                        <div className="summary-term-heading">
+                          <span className="calculation-mark" aria-hidden="true">
+                            +
+                          </span>
+                          <span>Total de ventas</span>
+                        </div>
+                        <strong className="number">
+                          {money(summary!.income)}
+                        </strong>
+                      </div>
+                      <div className="summary-card expense-total">
+                        <div className="summary-term-heading">
+                          <span className="calculation-mark" aria-hidden="true">
+                            −
+                          </span>
+                          <span>Gastos del periodo</span>
+                        </div>
+                        <strong className="number">
+                          {money(summary!.expenses)}
+                        </strong>
+                      </div>
+                      <div className="summary-card commission-total">
+                        <div className="summary-term-heading">
+                          <span className="calculation-mark" aria-hidden="true">
+                            −
+                          </span>
+                          <span>Comisiones del periodo</span>
+                        </div>
+                        <strong className="number">
+                          {money(summary!.commissions)}
+                        </strong>
+                      </div>
+                      <div
                         className={
-                          "number " + (summary!.profit < 0 ? "danger" : "")
+                          "summary-card gain" +
+                          (summary!.profit < 0 ? " is-loss" : "")
                         }
                       >
-                        {money(summary!.profit)}
-                      </strong>
+                        <div className="summary-term-heading">
+                          <span className="calculation-mark" aria-hidden="true">
+                            =
+                          </span>
+                          <span>Ganancia</span>
+                        </div>
+                        <strong
+                          className={
+                            "number " + (summary!.profit < 0 ? "danger" : "")
+                          }
+                        >
+                          {money(summary!.profit)}
+                        </strong>
+                      </div>
                     </div>
-                    <div className="summary-card collected">
-                      <span>Total de ventas</span>
-                      <strong className="number">
-                        {money(summary!.income)}
-                      </strong>
+                  </section>
+                  <section
+                    className="pending-section"
+                    aria-label="Saldos pendientes de todas las fechas"
+                  >
+                    <div className="pending-heading">
+                      <h2>Por pagar</h2>
+                      <span>Todas las fechas</span>
                     </div>
-                    <button
-                      className="summary-card supplier-due"
-                      onClick={() => choosePanel("proveedores")}
-                    >
-                      <span>Por pagar a proveedores</span>
-                      <strong className="number">
-                        {money(summary!.payable)}
-                      </strong>
-                    </button>
-                    <button
-                      className="summary-card employee-due"
-                      onClick={() => choosePanel("comisiones")}
-                    >
-                      <span>Comisiones por pagar</span>
-                      <strong className="number">
-                        {money(summary!.employeePayable)}
-                      </strong>
-                    </button>
-                  </div>
+                    <div className="pending-grid">
+                      <button
+                        className="summary-card supplier-due"
+                        aria-label={
+                          "Por pagar a proveedores: " + money(summary!.payable)
+                        }
+                        onClick={() => choosePanel("proveedores")}
+                      >
+                        <div className="pending-card-content">
+                          <span>Proveedores</span>
+                          <strong className="number">
+                            {money(summary!.payable)}
+                          </strong>
+                        </div>
+                        <ChevronRight size={23} aria-hidden="true" />
+                      </button>
+                      <button
+                        className="summary-card employee-due"
+                        aria-label={
+                          "Comisiones por pagar: " +
+                          money(summary!.employeePayable)
+                        }
+                        onClick={() => choosePanel("comisiones")}
+                      >
+                        <div className="pending-card-content">
+                          <span>Comisiones a empleados</span>
+                          <strong className="number">
+                            {money(summary!.employeePayable)}
+                          </strong>
+                        </div>
+                        <ChevronRight size={23} aria-hidden="true" />
+                      </button>
+                    </div>
+                  </section>
                   <div className="history-header">
                     <div className="history-tabs">
                       {panels.map((item) => (

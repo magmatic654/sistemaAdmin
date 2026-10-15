@@ -27,6 +27,12 @@ muestran el intervalo con flechas para navegar; sólo el personalizado despliega
 Desde/Hasta. Liquidar comisiones abre Todas las pendientes, con todas las fechas,
 y permite acotar el periodo antes de confirmar. Las pagadas quedan fuera del pago.
 
+El Resumen ordena el cálculo del periodo: total de ventas (azul), menos gastos
+(cobre), menos comisiones (índigo) y ganancia. El resultado tiene mayor jerarquía,
+fondo verde y cambia a rojo cuando hay pérdida. En móvil se lee como una cuenta
+vertical. Debajo, «Por pagar · Todas las fechas» reúne los saldos globales de
+proveedores y empleados con menor énfasis y acceso a sus pendientes.
+
 Las ventas se registran con cobro completo, sin apartado de crédito ni abonos de
 clientes. Los pagos parciales y saldos pendientes sólo corresponden a proveedores.
 El detalle de cada venta muestra artículos,

@@ -2829,3 +2829,214 @@ th {
     gap: 5px;
   }
 }
+
+/* The period reads as one calculation; outstanding balances are secondary. */
+.profit-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.2fr);
+  gap: 16px;
+  margin-bottom: 0;
+}
+.profit-grid .summary-card {
+  --summary-accent: var(--ink);
+  --summary-wash: var(--rule-soft);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--rule);
+  border-top: 4px solid var(--summary-accent);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.summary-term-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 44px;
+}
+.summary-term-heading > span:last-child {
+  color: var(--secondary);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+.calculation-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: var(--summary-wash);
+  color: var(--summary-accent);
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1;
+}
+.profit-grid .summary-card strong {
+  margin: 0;
+  color: var(--summary-accent);
+  font-size: clamp(26px, 2.25vw, 32px);
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.profit-grid .expense-total {
+  --summary-accent: var(--amber);
+  --summary-wash: var(--amber-wash);
+}
+.profit-grid .commission-total {
+  --summary-accent: var(--indigo);
+  --summary-wash: var(--indigo-wash);
+}
+.profit-grid .gain {
+  --summary-accent: var(--green);
+  --summary-wash: var(--paper);
+  background: var(--green-wash);
+  border-color: var(--green);
+}
+.profit-grid .gain .summary-term-heading > span:last-child {
+  color: var(--summary-accent);
+  font-size: 20px;
+  font-weight: 700;
+}
+.profit-grid .gain strong {
+  font-size: clamp(30px, 2.7vw, 38px);
+  font-weight: 700;
+}
+.profit-grid .gain.is-loss {
+  --summary-accent: var(--red);
+  background: var(--red-wash);
+  border-color: var(--red);
+}
+.pending-section {
+  margin: 28px 0 36px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule);
+}
+.pending-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.pending-heading h2 {
+  font-size: 18px;
+  letter-spacing: 0;
+}
+.pending-heading > span {
+  color: var(--tertiary);
+  font-size: 14px;
+}
+.pending-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.pending-grid .summary-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 18px 20px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--paper);
+}
+.pending-grid .summary-card:hover {
+  background: var(--rule-soft);
+}
+.pending-card-content {
+  min-width: 0;
+}
+.pending-card-content > span {
+  display: block;
+  color: var(--secondary);
+  font-size: 15px;
+}
+.pending-grid .summary-card strong {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 25px;
+  line-height: 1.3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.pending-grid .summary-card > svg {
+  flex: none;
+  color: var(--tertiary);
+}
+@media (max-width: 1280px) {
+  .profit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .profit-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .profit-grid .summary-card {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 16px;
+    border: 0;
+    border-bottom: 1px solid var(--rule-soft);
+    border-left: 3px solid var(--summary-accent);
+    border-radius: 0;
+  }
+  .summary-term-heading {
+    flex: 1 1 140px;
+    min-height: 32px;
+    gap: 8px;
+  }
+  .summary-term-heading > span:last-child {
+    font-size: 15px;
+  }
+  .calculation-mark {
+    width: 24px;
+    height: 24px;
+    font-size: 20px;
+  }
+  .profit-grid .summary-card strong {
+    flex: 0 1 auto;
+    max-width: 100%;
+    font-size: 27px;
+    text-align: right;
+  }
+  .profit-grid .gain {
+    padding-block: 20px;
+    border-bottom: 0;
+    border-left-width: 6px;
+  }
+  .profit-grid .gain strong {
+    font-size: clamp(28px, 8vw, 34px);
+  }
+  .pending-section {
+    margin: 22px 0 28px;
+    padding-top: 18px;
+  }
+  .pending-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .pending-grid .summary-card {
+    padding: 14px 16px;
+  }
+  .pending-grid .summary-card strong {
+    font-size: 23px;
+  }
+}
