@@ -9,7 +9,8 @@ if(process.env.SHARED_DATABASE_ENVIRONMENT!=='development' || url.hostname!=='12
 const client=await getClient();
 try {
   if(!check){await client.query('BEGIN');try{
-    await client.query(await fs.readFile(new URL('../database/001-administration.sql',import.meta.url),'utf8'));
+    for(const name of ['001-administration.sql','002-manual-registration.sql'])
+      await client.query(await fs.readFile(new URL('../database/'+name,import.meta.url),'utf8'));
     await client.query('COMMIT');
   }catch(error){await client.query('ROLLBACK');throw error;}}
   const {rows}=await client.query('SELECT version FROM administracion.configuration WHERE singleton IS TRUE');

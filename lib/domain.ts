@@ -18,7 +18,7 @@ export function cents(value: unknown, label = 'Importe', allowZero = false): num
   return result;
 }
 export function date(value: unknown): string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number(value.slice(0,4)) < 2000 || Number(value.slice(0,4)) > 2100 || new Date(value + 'T12:00:00Z').toISOString().slice(0,10) !== value)
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || Number(value.slice(0,4)) < 2000 || Number(value.slice(0,4)) > 2100 || !Number.isFinite(new Date(value+'T12:00:00Z').getTime()) || new Date(value + 'T12:00:00Z').toISOString().slice(0,10) !== value)
     throw new ValidationError('Captura una fecha válida entre 2000 y 2100.');
   return value;
 }

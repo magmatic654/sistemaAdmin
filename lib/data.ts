@@ -1,0 +1,281 @@
+import { createHash, randomUUID } from 'node:crypto';
+import type { PoolClient } from 'pg';
+import { query, transaction } from './db.ts';
+import { ValidationError, text, uuid, method, date, cents, manualLines, commissionAmount, parseTicketReference, type RecordInput, type Line } from './domain.ts';
+import type { AdminState, Movement, Sale, Payment, CommissionRow, Employee, Supplier } from './types.ts';
+
+const SALE_UNION = `SELECT 'ventas' AS kind,id,folio,origen_app AS origin,"fechaVenta" AS sold_at,
+  cliente->>'nombre' AS contact,cliente->>'telefono' AS phone,"metodoPago" AS method,
+  items,subtotal,iva,total,COALESCE(cancelada,false) AS cancelled FROM public.ventas
+ UNION ALL SELECT 'ventas_productos',id,folio,origen_app,fecha,cliente,'' AS phone,"metodoPago",items,subtotal,iva,total,false FROM public.ventas_productos`;
+
+function record(value: unknown): RecordInput {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ValidationError('Solicitud inválida.');
+  return value as RecordInput;
+}
+function storedCents(value: unknown): number {
+  return cents(String(value),'Importe del ticket',true);
+}
+function saleRow(row: RecordInput): Sale {
+  const items = (row.items as RecordInput[]).map(item => {
+    const snapshot = item.llantaSnapshot as RecordInput | undefined;
+    const description = snapshot ? [snapshot.marca,snapshot.modelo,snapshot.medida].filter(Boolean).join(' ') : String(item.nombre || item.servicioNombre || 'Producto o servicio');
+    return { description, quantity:Number(item.cantidad), unitCents:storedCents(item.precioUnitario),
+      totalCents:item.subtotal == null ? storedCents(item.precioUnitario)*Number(item.cantidad) : storedCents(item.subtotal) };
+  });
+  let costCents:number|null = 0;
+  for (const item of row.items as RecordInput[]) {
+    if (item.costoUnitario == null || item.costoSubtotal == null) { costCents=null; break; }
+    costCents += storedCents(item.costoSubtotal);
+  }
+  return { kind:String(row.kind),id:String(row.id),folio:String(row.folio),origin:String(row.origin),
+    date:String(row.business_date),contact:String(row.contact || 'Público general'),phone:String(row.phone || ''),
+    method:['efectivo','tarjeta','transferencia','otro'].includes(String(row.method)) ? String(row.method) : 'otro',
+    subtotalCents:storedCents(row.subtotal),taxCents:storedCents(row.iva),totalCents:storedCents(row.total),costCents,
+    items,cancelled:Boolean(row.cancelled),registeredId:row.registered_id as string|null };
+}
+
+export async function lookupSales(code: string, client?: PoolClient): Promise<Sale[]> {
+  const needle=text(code,'Código o folio',100);
+  const ref=parseTicketReference(needle);
+  const values=ref ? [ref.kind,ref.id] : [needle];
+  const sql=`SELECT s.*, (s.sold_at AT TIME ZONE 'America/Mexico_City')::date::text AS business_date,m.id AS registered_id
+    FROM (${SALE_UNION}) s LEFT JOIN administracion.movements m ON m.source_kind=s.kind AND m.source_id=s.id
+    WHERE ${ref ? 's.kind=$1 AND s.id=$2' : '(s.folio=$1 OR s.id=$1)'} ORDER BY s.sold_at DESC LIMIT 20`;
+  const result=client ? await client.query(sql,values) : await query(sql,values);
+  return result.rows.map(saleRow);
+}
+
+const numericFields=['subtotal_cents','tax_cents','total_cents','paid_cents','cost_cents','commission_cents'] as const;
+function movementRow(row: RecordInput): Movement {
+  for (const key of numericFields) if(row[key]!=null) row[key]=Number(row[key]);
+  return row as Movement;
+}
+
+export async function getState(params: URLSearchParams): Promise<AdminState> {
+  const from=date(params.get('from')),to=date(params.get('to'));
+  if(from>to)throw new ValidationError('La fecha inicial no puede ser posterior a la final.');
+  const search=(params.get('q') || '').trim().slice(0,160);
+  const view=params.get('view') || 'resumen';
+  const page=Math.max(1,Math.min(100000,Number(params.get('page')) || 1));
+  if(!Number.isInteger(page))throw new ValidationError('Página inválida.');
+  const pageSize=25;
+  const values:unknown[]=[from,to];
+  let condition='l.date BETWEEN $1::date AND $2::date';
+  if(view==='entradas')condition+=" AND l.kind='entrada'";
+  if(view==='salidas')condition+=" AND l.kind='salida'";
+  if(view==='cobros' || view==='proveedores') {
+    condition=`l.kind='${view==='cobros'?'entrada':'salida'}' AND l.total_cents>l.paid_cents AND NOT l.source_cancelled AND l.voided_at IS NULL AND $1::date<=$2::date`;
+  }
+  if(search){values.push('%'+search.replace(/[\\%_]/g,'\\$&')+'%');condition+=` AND concat_ws(' ',l.concept,l.contact,l.source_folio,l.reference,l.employee_name) ILIKE $${values.length}`;}
+  const [totals,cash,pending,movements,count,employees,suppliers,commissions] = await Promise.all([
+    query(`SELECT
+      COALESCE(sum(total_cents) FILTER(WHERE kind='entrada' AND NOT source_cancelled AND voided_at IS NULL),0) AS income,
+      COALESCE(sum(total_cents) FILTER(WHERE kind='salida' AND voided_at IS NULL),0) AS expenses,
+      COALESCE(sum(commission_cents) FILTER(WHERE NOT source_cancelled AND voided_at IS NULL),0) AS commissions,
+      count(*) FILTER(WHERE source_cancelled AND voided_at IS NULL) AS cancelled
+      FROM administracion.manual_ledger WHERE date BETWEEN $1::date AND $2::date`,[from,to]),
+    query(`SELECT
+      COALESCE(sum(p.amount_cents) FILTER(WHERE m.kind='entrada'),0) AS collected,
+      COALESCE(sum(p.amount_cents) FILTER(WHERE m.kind='salida'),0) AS paid,
+      (SELECT COALESCE(sum(c.amount_cents),0) FROM administracion.commissions c JOIN administracion.movements x ON x.id=c.movement_id
+        WHERE c.paid_on BETWEEN $1::date AND $2::date AND x.voided_at IS NULL) AS commission_paid
+      FROM administracion.payments p JOIN administracion.movements m ON m.id=p.movement_id
+      WHERE p.date BETWEEN $1::date AND $2::date AND m.voided_at IS NULL`,[from,to]),
+    query(`SELECT COALESCE(sum(total_cents-paid_cents) FILTER(WHERE kind='entrada'),0) AS receivable,
+      COALESCE(sum(total_cents-paid_cents) FILTER(WHERE kind='salida'),0) AS payable
+      FROM administracion.manual_ledger WHERE voided_at IS NULL AND NOT source_cancelled`),
+    query(`SELECT l.*,l.date::text, l.commission_paid_on::text FROM administracion.manual_ledger l WHERE ${condition}
+      ORDER BY l.date DESC,l.created_at DESC,l.id LIMIT ${pageSize} OFFSET ${(page-1)*pageSize}`,values),
+    query(`SELECT count(*) AS count FROM administracion.manual_ledger l WHERE ${condition}`,values),
+    query<Employee>('SELECT * FROM administracion.employees ORDER BY active DESC,name,id'),
+    query<Supplier>('SELECT * FROM administracion.suppliers ORDER BY active DESC,name,id'),
+    query(`SELECT c.id,c.movement_id,l.date::text,l.concept,l.contact,l.source_folio,c.employee_id,l.employee_name,
+      c.amount_cents,c.paid_on::text,l.source_cancelled,l.voided_at
+      FROM administracion.commissions c JOIN administracion.manual_ledger l ON l.id=c.movement_id
+      WHERE l.date BETWEEN $1::date AND $2::date ORDER BY l.date DESC,c.created_at DESC`,[from,to]),
+  ]);
+  const t=totals.rows[0],c=cash.rows[0],p=pending.rows[0];
+  const summary={income:Number(t.income),expenses:Number(t.expenses),commissions:Number(t.commissions),cancelled:Number(t.cancelled),
+    collected:Number(c.collected),paid:Number(c.paid),commissionPaid:Number(c.commission_paid),receivable:Number(p.receivable),payable:Number(p.payable),profit:0,cash:0};
+  summary.profit=summary.income-summary.expenses-summary.commissions;
+  summary.cash=summary.collected-summary.paid-summary.commissionPaid;
+  return {summary,movements:movements.rows.map(movementRow),total:Number(count.rows[0].count),page,pageSize,
+    employees:employees.rows,suppliers:suppliers.rows,range:{from,to},
+    commissions:commissions.rows.map(row=>({...row,amount_cents:Number(row.amount_cents)})) as CommissionRow[],providerNames:[]};
+}
+
+export async function movementDetail(id: string) {
+  uuid(id);
+  const [m,p]=await Promise.all([
+    query('SELECT l.*,l.date::text,l.commission_paid_on::text FROM administracion.manual_ledger l WHERE id=$1',[id]),
+    query('SELECT id,date::text,amount_cents,method,reference FROM administracion.payments WHERE movement_id=$1 ORDER BY date,created_at',[id]),
+  ]);
+  if(!m.rows.length)throw new ValidationError('El movimiento ya no está disponible.');
+  return {movement:movementRow(m.rows[0]),payments:p.rows.map(row=>({...row,amount_cents:Number(row.amount_cents)})) as Payment[]};
+}
+
+async function lockMovement(client:PoolClient,id:unknown) {
+  uuid(id);
+  const result=await client.query('SELECT m.*,m.date::text FROM administracion.movements m WHERE id=$1 FOR UPDATE',[id]);
+  if(!result.rows[0])throw new ValidationError('El movimiento no existe.');
+  const row=result.rows[0];
+  if(row.voided_at)throw new ValidationError('El movimiento está anulado.');
+  if(row.source_id){
+    const source=await client.query(`SELECT id${row.source_kind==='ventas'?',cancelada':''} FROM public.${row.source_kind==='ventas'?'ventas':'ventas_productos'} WHERE id=$1 FOR SHARE`,[row.source_id]);
+    if(!source.rows[0] || source.rows[0].cancelada)throw new ValidationError('El ticket de origen está cancelado o no está disponible. Revisa los cobros y comisiones.');
+  }
+  return row;
+}
+
+async function addCommission(client:PoolClient,movementId:string,total:number,raw:unknown) {
+  if(raw==null)return;
+  const commission=record(raw);
+  const employeeId=uuid(commission.employeeId);
+  const employee=await client.query('SELECT id FROM administracion.employees WHERE id=$1 AND active FOR SHARE',[employeeId]);
+  if(!employee.rows.length)throw new ValidationError('Selecciona un empleado activo.');
+  const amount=commissionAmount(total,commission.mode,commission.value);
+  await client.query('INSERT INTO administracion.commissions(id,movement_id,employee_id,amount_cents) VALUES($1,$2,$3,$4)',[randomUUID(),movementId,employeeId,amount]);
+}
+
+async function addPayment(client:PoolClient,movementId:string,raw:RecordInput) {
+  const movement=await lockMovement(client,movementId);
+  const amount=cents(raw.amount),paidDate=date(raw.date);
+  if(paidDate<movement.date)throw new ValidationError('El abono no puede ser anterior al movimiento.');
+  const previous=await client.query('SELECT COALESCE(sum(amount_cents),0) AS amount FROM administracion.payments WHERE movement_id=$1',[movementId]);
+  if(amount+Number(previous.rows[0].amount)>Number(movement.total_cents))throw new ValidationError('El abono supera el saldo pendiente.');
+  const id=randomUUID();
+  await client.query('INSERT INTO administracion.payments(id,movement_id,date,amount_cents,method,reference) VALUES($1,$2,$3,$4,$5,$6)',
+    [id,movementId,paidDate,amount,method(raw.method),text(raw.reference,'Referencia',160,false)]);
+  return {id};
+}
+
+async function createMovement(client:PoolClient,input:RecordInput) {
+  const kind=input.kind;
+  if(kind!=='entrada' && kind!=='salida')throw new ValidationError('Tipo de movimiento inválido.');
+  let lines:Line[],total:number,subtotal:number,tax:number,source:Sale|undefined;
+  let movementDate=date(input.date),contact=text(input.contact,'Cliente o proveedor',160,false) || (kind==='entrada'?'Público general':''),phone=text(input.phone,'Teléfono',40,false);
+  let paymentMethod=method(input.method);
+  if(kind==='entrada'){
+    if(kind!=='entrada')throw new ValidationError('Un ticket solo puede registrarse como entrada.');
+    let identity:RecordInput;
+    if(input.source)identity=record(input.source);
+    else {
+      const code=text(input.ticketCode,'ID de venta del ticket',100);
+      const matches=await lookupSales(code,client);
+      if(matches.length!==1)throw new ValidationError(matches.length?'Hay varios tickets con ese folio. Usa el código de barras o ID completo.':'No encontramos el ID de venta. Usa el ID o código impreso en el ticket.');
+      identity={kind:matches[0].kind,id:matches[0].id};
+    }
+    if(!['ventas','ventas_productos'].includes(String(identity.kind)))throw new ValidationError('Origen inválido.');
+    const sourceId=text(identity.id,'Ticket',80);
+    // Lock the source against concurrent cancellation while importing. Never write stock or sales.
+    const locked=await client.query(`SELECT id FROM public.${identity.kind==='ventas'?'ventas':'ventas_productos'} WHERE id=$1 FOR SHARE`,[sourceId]);
+    if(!locked.rows.length)throw new ValidationError('El ticket no existe.');
+    const found=await lookupSales(`LLA1:${identity.kind==='ventas'?'V':'P'}:${sourceId}`,client);
+    source=found[0];
+    if(!source || source.cancelled)throw new ValidationError('No se puede registrar un ticket cancelado.');
+    if(source.registeredId)throw new ValidationError('Este ticket ya está registrado en Administración.');
+  }
+  if(source && input.useTicketData===true){
+    lines=source.items;total=source.totalCents;subtotal=source.subtotalCents;tax=source.taxCents;
+    movementDate=source.date;contact=source.contact;phone=source.phone;paymentMethod=method(source.method);
+    if(total<1 || subtotal+tax!==total)throw new ValidationError('El ticket tiene importes inconsistentes; revisa el sistema de origen.');
+  }else{
+    lines=manualLines(input.items);total=lines.reduce((sum,l)=>sum+l.totalCents,0);
+    if(input.vatIncluded!==true && input.vatIncluded!==false)throw new ValidationError('Indica si el precio incluye IVA.');
+    subtotal=input.vatIncluded?Math.round(total/1.16):total;tax=total-subtotal;
+  }
+  const id=randomUUID();
+  let supplierId:string|null=null;
+  if(input.supplierId){
+    if(kind!=='salida')throw new ValidationError('El proveedor corresponde a una salida.');
+    supplierId=uuid(input.supplierId);
+    const supplier=await client.query('SELECT name FROM administracion.suppliers WHERE id=$1 AND active FOR SHARE',[supplierId]);
+    if(!supplier.rows.length)throw new ValidationError('Selecciona un proveedor activo.');
+    contact=supplier.rows[0].name;
+  }
+  const concept=source && input.useTicketData===true?lines.map(l=>l.description).join(' · ').slice(0,300):text(input.concept,'Concepto',300);
+  const category=source?'Venta con ticket':text(input.category,'Categoría',80);
+  const received=cents(input.received,'Importe pagado',true);
+  if(received>total)throw new ValidationError('El pago inicial no puede superar el total.');
+  await client.query(`INSERT INTO administracion.movements(id,kind,date,concept,category,contact,phone,supplier_id,items,
+    subtotal_cents,tax_cents,total_cents,method,reference,notes,source_kind,source_id,source_folio,source_origin,cost_cents)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+    [id,kind,movementDate,concept,category,contact,phone,supplierId,JSON.stringify(lines),subtotal,tax,total,paymentMethod,
+      text(input.reference,'Referencia',160,false),text(input.notes,'Notas',2000,false),source?.kind || null,source?.id || null,source?.folio || null,source?.origin || null,source && input.useTicketData===true?source.costCents:null]);
+  if(input.commission!=null){
+    if(kind!=='entrada')throw new ValidationError('Solo una entrada puede tener comisión.');
+    await addCommission(client,id,total,input.commission);
+  }
+  if(received>0)await addPayment(client,id,{amount:(received/100).toFixed(2),date:input.paymentDate || movementDate,method:paymentMethod,reference:input.reference});
+  return {id};
+}
+
+async function executeAction(client:PoolClient,action:string,input:RecordInput):Promise<RecordInput> {
+  if(action==='movement.create')return createMovement(client,input);
+  if(action==='payment.create')return addPayment(client,uuid(input.movementId),input);
+  if(action==='commission.create'){
+    const movement=await lockMovement(client,input.movementId);
+    if(movement.kind!=='entrada')throw new ValidationError('La comisión debe estar ligada a una entrada.');
+    await addCommission(client,movement.id,Number(movement.total_cents),input.commission);return {id:movement.id};
+  }
+  if(action==='commission.pay'){
+    const id=uuid(input.id);
+    const commission=await client.query('SELECT * FROM administracion.commissions WHERE id=$1',[id]);
+    if(!commission.rows.length)throw new ValidationError('La comisión no existe.');
+    const movement=await lockMovement(client,commission.rows[0].movement_id);
+    const paidOn=date(input.date);
+    if(paidOn<movement.date)throw new ValidationError('El pago no puede ser anterior a la venta.');
+    const result=await client.query('UPDATE administracion.commissions SET paid_on=$2 WHERE id=$1 AND paid_on IS NULL RETURNING id',[id,paidOn]);
+    if(!result.rows.length)throw new ValidationError('Esta comisión ya está pagada.');
+    return {id};
+  }
+  if(action==='movement.void'){
+    const id=uuid(input.id),reason=text(input.reason,'Motivo de anulación',500);
+    // Admin records are voided; the source ticket and inventory remain under their original app.
+    const movement=await client.query('SELECT * FROM administracion.movements WHERE id=$1 FOR UPDATE',[id]);
+    if(!movement.rows.length || movement.rows[0].voided_at)throw new ValidationError('El movimiento ya está anulado o no existe.');
+    const paid=await client.query('SELECT id FROM administracion.commissions WHERE movement_id=$1 AND paid_on IS NOT NULL',[id]);
+    if(paid.rows.length)throw new ValidationError('No se puede anular una entrada con comisión pagada. Registra primero la corrección correspondiente.');
+    await client.query('UPDATE administracion.movements SET voided_at=now(),void_reason=$2 WHERE id=$1',[id,reason]);
+    return {id};
+  }
+  if(action==='employee.save' || action==='supplier.save'){
+    const isEmployee=action==='employee.save',id=input.id?uuid(input.id):randomUUID();
+    const name=text(input.name,'Nombre',160),phone=text(input.phone,'Teléfono',40,false);
+    if(isEmployee){
+      await client.query(`INSERT INTO administracion.employees(id,name,phone,position) VALUES($1,$2,$3,$4)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,phone=excluded.phone,position=excluded.position`,[id,name,phone,text(input.position,'Puesto',100,false)]);
+    }else{
+      await client.query(`INSERT INTO administracion.suppliers(id,name,phone,tax_id,concept,category,method) VALUES($1,$2,$3,$4,$5,$6,$7)
+        ON CONFLICT(id) DO UPDATE SET name=excluded.name,phone=excluded.phone,tax_id=excluded.tax_id,concept=excluded.concept,category=excluded.category,method=excluded.method`,
+        [id,name,phone,text(input.tax_id,'RFC',20,false),text(input.concept,'Concepto habitual',300,false),text(input.category,'Categoría',80),method(input.method)]);
+    }
+    return {id};
+  }
+  if(action==='employee.active' || action==='supplier.active'){
+    const id=uuid(input.id);
+    if(typeof input.active!=='boolean')throw new ValidationError('Estado inválido.');
+    const result=await client.query(`UPDATE administracion.${action==='employee.active'?'employees':'suppliers'} SET active=$2 WHERE id=$1 RETURNING id`,[id,input.active]);
+    if(!result.rows.length)throw new ValidationError('El registro no existe.');return {id};
+  }
+  throw new ValidationError('Acción no reconocida.');
+}
+
+/** Serialize retries, compare payload hashes and commit effects + durable outcome atomically. */
+export async function mutate(action:string,payload:unknown,requestId:string) {
+  const input=record(payload);uuid(requestId);
+  const hash=createHash('sha256').update(JSON.stringify({action,input})).digest('hex');
+  return transaction(async client=>{
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[requestId]);
+    const previous=await client.query('SELECT hash,result FROM administracion.operations WHERE id=$1',[requestId]);
+    if(previous.rows.length){
+      if(previous.rows[0].hash!==hash)throw new ValidationError('La solicitud ya fue usada con otros datos.');
+      return previous.rows[0].result;
+    }
+    const result=await executeAction(client,action,input);
+    await client.query('INSERT INTO administracion.operations(id,hash,action,result) VALUES($1,$2,$3,$4::jsonb)',[requestId,hash,action,JSON.stringify(result)]);
+    await client.query('INSERT INTO administracion.audit(action,entity_id,details) VALUES($1,$2,$3::jsonb)',[action,result.id,JSON.stringify({requestId})]);
+    return result;
+  });
+}
