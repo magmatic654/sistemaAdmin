@@ -7,7 +7,7 @@ Consulta la base de `sistemaBodega` y `llaneteramulti` con una conexión de sól
 ## Secciones
 
 - **Registro:** nueva venta, nueva salida y lectura de tickets.
-- **Resumen:** ganancias, cobrado, historial de ventas/salidas y pagos pendientes
+- **Resumen:** ganancias, total de ventas, historial de ventas/salidas y pagos pendientes
   a proveedores y empleados.
 - **Empleados:** agregar, editar, eliminar/restaurar y consultar comisiones por
   día, semana, mes o rango personalizado. Liquidar un periodo o todas las pendientes

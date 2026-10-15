@@ -629,7 +629,7 @@ export default function Dashboard({ today }: { today: string }) {
                       </strong>
                     </div>
                     <div className="summary-card collected">
-                      <span>Cobrado</span>
+                      <span>Total de ventas</span>
                       <strong className="number">
                         {money(summary!.collected)}
                       </strong>
