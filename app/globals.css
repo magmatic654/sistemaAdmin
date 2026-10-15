@@ -2831,11 +2831,18 @@ th {
   }
 }
 
-/* The period reads as one calculation; outstanding balances are secondary. */
+/* Profit leads; the three smaller amounts explain the result. */
 .profit-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.2fr);
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
   gap: 16px;
   margin-bottom: 0;
+}
+.profit-details {
+  display: grid;
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  min-width: 0;
 }
 .profit-grid .summary-card {
   --summary-accent: var(--ink);
@@ -2884,6 +2891,23 @@ th {
   line-height: 1.2;
   white-space: normal;
   overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.profit-details .summary-card {
+  flex-direction: row;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 16px 20px;
+  border-top-width: 1px;
+  border-left: 4px solid var(--summary-accent);
+}
+.profit-details .summary-term-heading {
+  flex: 1 1 180px;
+  min-height: 28px;
+}
+.profit-details .summary-card strong {
+  font-size: clamp(24px, 2.2vw, 30px);
 }
 .profit-grid .expense-total {
   --summary-accent: var(--amber);
@@ -2898,14 +2922,18 @@ th {
   --summary-wash: var(--paper);
   background: var(--green-wash);
   border-color: var(--green);
+  justify-content: center;
+  min-height: 296px;
+  padding: 32px;
+  gap: 20px;
 }
 .profit-grid .gain .summary-term-heading > span:last-child {
   color: var(--summary-accent);
-  font-size: 20px;
+  font-size: 28px;
   font-weight: 700;
 }
 .profit-grid .gain strong {
-  font-size: clamp(30px, 2.7vw, 38px);
+  font-size: clamp(36px, 4.4vw, 64px);
   font-weight: 700;
 }
 .profit-grid .gain.is-loss {
@@ -2973,58 +3001,57 @@ th {
   flex: none;
   color: var(--tertiary);
 }
-@media (max-width: 1280px) {
-  .profit-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+@media (min-width: 701px) and (max-width: 1000px) {
+  .profit-details .summary-card {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .profit-details .summary-term-heading {
+    flex: 0 1 auto;
+  }
+  .profit-grid .gain {
+    padding: 24px;
   }
 }
 @media (max-width: 700px) {
   .profit-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 0;
-    border: 1px solid var(--rule);
-    border-radius: 12px;
-    overflow: hidden;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
   }
-  .profit-grid .summary-card {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding: 16px;
-    border: 0;
-    border-bottom: 1px solid var(--rule-soft);
-    border-left: 3px solid var(--summary-accent);
-    border-radius: 0;
-  }
-  .summary-term-heading {
-    flex: 1 1 140px;
-    min-height: 32px;
+  .profit-details {
     gap: 8px;
   }
-  .summary-term-heading > span:last-child {
-    font-size: 15px;
+  .profit-details .summary-card {
+    padding: 14px 16px;
+    gap: 8px 12px;
+  }
+  .profit-details .summary-term-heading {
+    flex-basis: 140px;
+    gap: 8px;
   }
   .calculation-mark {
     width: 24px;
     height: 24px;
     font-size: 20px;
   }
-  .profit-grid .summary-card strong {
+  .profit-details .summary-card strong {
     flex: 0 1 auto;
-    max-width: 100%;
-    font-size: 27px;
+    font-size: 24px;
     text-align: right;
   }
   .profit-grid .gain {
-    padding-block: 20px;
-    border-bottom: 0;
-    border-left-width: 6px;
+    min-height: 188px;
+    padding: 24px 20px;
+    gap: 16px;
+  }
+  .profit-grid .gain .summary-term-heading > span:last-child {
+    font-size: 25px;
   }
   .profit-grid .gain strong {
-    font-size: clamp(28px, 8vw, 34px);
+    font-size: clamp(40px, 10vw, 46px);
+  }
+  .profit-grid .gain.is-long-amount strong {
+    font-size: clamp(28px, 8.5vw, 46px);
   }
   .pending-section {
     margin: 22px 0 28px;

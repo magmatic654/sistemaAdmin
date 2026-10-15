@@ -813,43 +813,13 @@ export default function Dashboard({ today }: { today: string }) {
                     aria-label="Cálculo de ganancia del periodo"
                   >
                     <div className="summary-grid profit-grid">
-                      <div className="summary-card collected">
-                        <div className="summary-term-heading">
-                          <span className="calculation-mark" aria-hidden="true">
-                            +
-                          </span>
-                          <span>Total de ventas</span>
-                        </div>
-                        <strong className="number">
-                          {money(summary!.income)}
-                        </strong>
-                      </div>
-                      <div className="summary-card expense-total">
-                        <div className="summary-term-heading">
-                          <span className="calculation-mark" aria-hidden="true">
-                            −
-                          </span>
-                          <span>Gastos del periodo</span>
-                        </div>
-                        <strong className="number">
-                          {money(summary!.expenses)}
-                        </strong>
-                      </div>
-                      <div className="summary-card commission-total">
-                        <div className="summary-term-heading">
-                          <span className="calculation-mark" aria-hidden="true">
-                            −
-                          </span>
-                          <span>Comisiones del periodo</span>
-                        </div>
-                        <strong className="number">
-                          {money(summary!.commissions)}
-                        </strong>
-                      </div>
                       <div
                         className={
                           "summary-card gain" +
-                          (summary!.profit < 0 ? " is-loss" : "")
+                          (summary!.profit < 0 ? " is-loss" : "") +
+                          (money(summary!.profit).length > 13
+                            ? " is-long-amount"
+                            : "")
                         }
                       >
                         <div className="summary-term-heading">
@@ -866,35 +836,85 @@ export default function Dashboard({ today }: { today: string }) {
                           {money(summary!.profit)}
                         </strong>
                       </div>
-                    </div>
-                  </section>
-                  <section
-                    className="review-period-summary"
-                    aria-label="Ventas por revisar del periodo"
-                  >
-                    <div className="review-period-copy">
-                      <span>Ventas por revisar</span>
-                      <strong className="number">
-                        {money(summary!.pendingIncome)}
-                      </strong>
-                      <small>
-                        {summary!.pendingSalesCount}{" "}
-                        {summary!.pendingSalesCount === 1
-                          ? "venta del periodo"
-                          : "ventas del periodo"}{" "}
-                        · No incluidas en la ganancia
-                      </small>
-                    </div>
-                    {!!data.reviewCount && (
-                      <button
-                        className="button secondary review-action"
-                        onClick={() => choosePanel("revision", true)}
+                      <div
+                        className="profit-details"
+                        role="group"
+                        aria-label="Detalle de la ganancia"
                       >
-                        Revisar ventas
-                        <ChevronRight size={21} aria-hidden="true" />
-                      </button>
-                    )}
+                        <div className="summary-card collected">
+                          <div className="summary-term-heading">
+                            <span
+                              className="calculation-mark"
+                              aria-hidden="true"
+                            >
+                              +
+                            </span>
+                            <span>Total de ventas</span>
+                          </div>
+                          <strong className="number">
+                            {money(summary!.income)}
+                          </strong>
+                        </div>
+                        <div className="summary-card expense-total">
+                          <div className="summary-term-heading">
+                            <span
+                              className="calculation-mark"
+                              aria-hidden="true"
+                            >
+                              −
+                            </span>
+                            <span>Gastos del periodo</span>
+                          </div>
+                          <strong className="number">
+                            {money(summary!.expenses)}
+                          </strong>
+                        </div>
+                        <div className="summary-card commission-total">
+                          <div className="summary-term-heading">
+                            <span
+                              className="calculation-mark"
+                              aria-hidden="true"
+                            >
+                              −
+                            </span>
+                            <span>Comisiones del periodo</span>
+                          </div>
+                          <strong className="number">
+                            {money(summary!.commissions)}
+                          </strong>
+                        </div>
+                      </div>
+                    </div>
                   </section>
+                  {summary!.pendingSalesCount > 0 && (
+                    <section
+                      className="review-period-summary"
+                      aria-label="Ventas por revisar del periodo"
+                    >
+                      <div className="review-period-copy">
+                        <span>Ventas por revisar</span>
+                        <strong className="number">
+                          {money(summary!.pendingIncome)}
+                        </strong>
+                        <small>
+                          {summary!.pendingSalesCount}{" "}
+                          {summary!.pendingSalesCount === 1
+                            ? "venta del periodo"
+                            : "ventas del periodo"}{" "}
+                          · No incluidas en la ganancia
+                        </small>
+                      </div>
+                      {!!data.reviewCount && (
+                        <button
+                          className="button secondary review-action"
+                          onClick={() => choosePanel("revision", true)}
+                        >
+                          Revisar ventas
+                          <ChevronRight size={21} aria-hidden="true" />
+                        </button>
+                      )}
+                    </section>
+                  )}
                   <section
                     className="pending-section"
                     aria-label="Saldos pendientes de todas las fechas"

@@ -27,12 +27,14 @@ muestran el intervalo con flechas para navegar; sólo el personalizado despliega
 Desde/Hasta. Liquidar comisiones abre Todas las pendientes, con todas las fechas,
 y permite acotar el periodo antes de confirmar. Las pagadas quedan fuera del pago.
 
-El Resumen ordena el cálculo confirmado del periodo: total de ventas (azul), menos gastos
-(cobre), menos comisiones (índigo) y ganancia. El resultado tiene mayor jerarquía,
-fondo verde y cambia a rojo cuando hay pérdida. En móvil se lee como una cuenta
-vertical. Debajo, «Por pagar · Todas las fechas» reúne los saldos globales de
+El Resumen destaca la ganancia en una tarjeta grande a la izquierda, con fondo
+verde que cambia a rojo cuando hay pérdida. A su derecha, tres tarjetas pequeñas
+apiladas explican el resultado: ventas (azul), gastos (cobre) y comisiones (índigo).
+En móvil, la ganancia aparece primero y sus detalles debajo. Debajo del cálculo,
+«Por pagar · Todas las fechas» reúne los saldos globales de
 proveedores y empleados con menor énfasis y acceso a sus pendientes.
-Una franja ámbar separa las ventas por revisar y su importe del periodo: no entran
+La franja ámbar sólo aparece cuando hay ventas por revisar en el periodo. Separa
+su importe del cálculo: no entran
 en la cuenta ni en las comisiones por pagar. El acceso lleva a la cola global,
 identificada con «Todas las fechas» y su propio importe.
 

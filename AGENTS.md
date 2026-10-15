@@ -21,6 +21,9 @@
 - Las ventas por revisar y sus comisiones no entran en ventas confirmadas ni en
   la ganancia. Mostrar su importe aparte por periodo y distinguirlo de la cola
   global. Las comisiones por pagar sólo incluyen ventas aprobadas o validadas.
+- Ocultar la franja de ventas por revisar si el periodo no contiene pendientes.
+  En Resumen, destacar ganancia grande y agrupar ventas, gastos y comisiones como
+  detalles pequeños a su lado; en móvil, ganancia primero y detalles debajo.
 - Mostrar producto, cantidad, precios, cliente, fecha, pago y comisión antes de
   pedir una decisión de revisión. Dejar códigos y referencias internas en un
   desplegable secundario; no usarlos como nombre de una venta en las listas.
