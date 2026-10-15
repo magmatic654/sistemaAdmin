@@ -3,6 +3,8 @@
 - Mantener sólo tres secciones principales: Registro, Resumen y Empleados.
 - No implementar inicio de sesión mientras el propietario no lo solicite.
 - Fondo blanco, letra grande, acentos de color con intención y mínimo texto. No agregar gráficas.
+- Ninguna vista ni formulario debe generar desplazamiento horizontal, tampoco
+  dentro de tablas o paneles. Adaptar el contenido al ancho; sólo se permite scroll Y.
 - Todo registro financiero requiere confirmación manual. No importar ni mostrar
   ventas de las otras apps sin una búsqueda explícita de ticket.
 - Una venta sólo puede registrarse una vez por su identidad canónica (tabla, id).

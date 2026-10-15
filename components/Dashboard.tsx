@@ -244,28 +244,48 @@ export default function Dashboard({ today }: { today: string }) {
     return (
       <div className="table-surface">
         <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>{panel === "proveedores" ? "Proveedor" : "Concepto"}</th>
-                <th>Estado</th>
-                <th className="align-right">
+          <table
+            className={
+              "responsive-table movement-table" +
+              (panel === "cobros" || panel === "proveedores"
+                ? " balance-table"
+                : "")
+            }
+            role="table"
+          >
+            <thead role="rowgroup">
+              <tr role="row">
+                <th scope="col" role="columnheader">
+                  Fecha
+                </th>
+                <th scope="col" role="columnheader">
+                  {panel === "proveedores" ? "Proveedor" : "Concepto"}
+                </th>
+                <th scope="col" role="columnheader">
+                  Estado
+                </th>
+                <th scope="col" role="columnheader" className="align-right">
                   {panel === "cobros" || panel === "proveedores"
                     ? "Pendiente"
                     : "Importe"}
                 </th>
-                <th />
+                <th scope="col" role="columnheader" aria-label="Acciones" />
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {data?.movements.map((m) => (
-                <tr key={m.id}>
-                  <td>
+                <tr key={m.id} role="row">
+                  <td role="cell" data-label="Fecha" className="mobile-wide">
                     {shortDate(m.date)}
                     <small>{m.source_folio || m.reference}</small>
                   </td>
-                  <td className="concept-cell">
+                  <td
+                    role="cell"
+                    data-label={
+                      panel === "proveedores" ? "Proveedor" : "Concepto"
+                    }
+                    className="concept-cell mobile-wide"
+                  >
                     <button className="row-link" onClick={() => void detail(m)}>
                       {panel === "proveedores"
                         ? m.contact || m.concept
@@ -275,10 +295,16 @@ export default function Dashboard({ today }: { today: string }) {
                       {panel === "proveedores" ? m.concept : m.contact}
                     </small>
                   </td>
-                  <td>
+                  <td role="cell" data-label="Estado">
                     <Status m={m} />
                   </td>
                   <td
+                    role="cell"
+                    data-label={
+                      panel === "cobros" || panel === "proveedores"
+                        ? "Pendiente"
+                        : "Importe"
+                    }
                     className={
                       "number align-right " + (m.voided_at ? "muted" : "")
                     }
@@ -289,7 +315,12 @@ export default function Dashboard({ today }: { today: string }) {
                         : m.total_cents,
                     )}
                   </td>
-                  <td className="align-right">
+                  <td
+                    role="cell"
+                    data-label="Acciones"
+                    aria-label="Acciones"
+                    className="align-right mobile-wide"
+                  >
                     {panel === "cobros" || panel === "proveedores" ? (
                       <button
                         className="button secondary small"
@@ -308,6 +339,7 @@ export default function Dashboard({ today }: { today: string }) {
                         }
                         onClick={() => void detail(m)}
                       >
+                        <span className="mobile-action-label">Ver detalle</span>
                         <ChevronRight size={22} />
                       </button>
                     )}
@@ -355,37 +387,62 @@ export default function Dashboard({ today }: { today: string }) {
     return (
       <div className="table-surface">
         <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Empleado / fecha</th>
-                <th>Venta</th>
-                <th className="align-right">Comisión</th>
-                <th>Estado</th>
-                <th />
+          <table className="responsive-table commission-table" role="table">
+            <thead role="rowgroup">
+              <tr role="row">
+                <th scope="col" role="columnheader">
+                  Empleado / fecha
+                </th>
+                <th scope="col" role="columnheader">
+                  Venta
+                </th>
+                <th scope="col" role="columnheader" className="align-right">
+                  Comisión
+                </th>
+                <th scope="col" role="columnheader">
+                  Estado
+                </th>
+                <th scope="col" role="columnheader" aria-label="Acciones" />
               </tr>
             </thead>
-            <tbody>
+            <tbody role="rowgroup">
               {rows.map((c) => (
-                <tr key={c.id}>
-                  <td>
+                <tr key={c.id} role="row">
+                  <td
+                    role="cell"
+                    data-label="Empleado / fecha"
+                    className="mobile-wide"
+                  >
                     <strong>{c.employee_name}</strong>
                     <small>{shortDate(c.date)}</small>
                   </td>
-                  <td className="concept-cell">
+                  <td
+                    role="cell"
+                    data-label="Venta"
+                    className="concept-cell mobile-wide"
+                  >
                     {c.source_folio || c.concept}
                   </td>
-                  <td className="number align-right">
+                  <td
+                    role="cell"
+                    data-label="Comisión"
+                    className="number align-right"
+                  >
                     {money(c.amount_cents)}
                   </td>
-                  <td>
+                  <td role="cell" data-label="Estado">
                     <span
                       className={"pill " + (c.paid_on ? "success" : "pending")}
                     >
                       {c.paid_on ? "Pagada" : "Pendiente"}
                     </span>
                   </td>
-                  <td>
+                  <td
+                    role="cell"
+                    data-label="Acciones"
+                    aria-label="Acciones"
+                    className="mobile-wide"
+                  >
                     {!c.paid_on && (
                       <button
                         className="text-button"
@@ -671,17 +728,44 @@ export default function Dashboard({ today }: { today: string }) {
                   </div>
                   <div className="table-surface">
                     <div className="table-scroll">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Empleado</th>
-                            <th className="align-right">Comisiones</th>
-                            <th className="align-right">Pagado</th>
-                            <th className="align-right">Pendiente</th>
-                            <th />
+                      <table
+                        className="responsive-table employee-table"
+                        role="table"
+                      >
+                        <thead role="rowgroup">
+                          <tr role="row">
+                            <th scope="col" role="columnheader">
+                              Empleado
+                            </th>
+                            <th
+                              scope="col"
+                              role="columnheader"
+                              className="align-right"
+                            >
+                              Comisiones
+                            </th>
+                            <th
+                              scope="col"
+                              role="columnheader"
+                              className="align-right"
+                            >
+                              Pagado
+                            </th>
+                            <th
+                              scope="col"
+                              role="columnheader"
+                              className="align-right"
+                            >
+                              Pendiente
+                            </th>
+                            <th
+                              scope="col"
+                              role="columnheader"
+                              aria-label="Acciones"
+                            />
                           </tr>
                         </thead>
-                        <tbody>
+                        <tbody role="rowgroup">
                           {employees.map((employee) => {
                             const rows = commissions.filter(
                                 (c) => c.employee_id === employee.id,
@@ -696,13 +780,18 @@ export default function Dashboard({ today }: { today: string }) {
                             return (
                               <tr
                                 key={employee.id}
+                                role="row"
                                 className={
                                   employeeId === employee.id
                                     ? "selected-row"
                                     : ""
                                 }
                               >
-                                <td>
+                                <td
+                                  role="cell"
+                                  data-label="Empleado"
+                                  className="mobile-wide"
+                                >
                                   <button
                                     className="row-link employee-name"
                                     onClick={() =>
@@ -719,16 +808,33 @@ export default function Dashboard({ today }: { today: string }) {
                                     <small>{employee.position}</small>
                                   )}
                                 </td>
-                                <td className="number align-right">
+                                <td
+                                  role="cell"
+                                  data-label="Comisiones"
+                                  className="number align-right"
+                                >
                                   {money(total)}
                                 </td>
-                                <td className="number align-right">
+                                <td
+                                  role="cell"
+                                  data-label="Pagado"
+                                  className="number align-right"
+                                >
                                   {money(paid)}
                                 </td>
-                                <td className="number align-right">
+                                <td
+                                  role="cell"
+                                  data-label="Pendiente"
+                                  className="number align-right"
+                                >
                                   {money(total - paid)}
                                 </td>
-                                <td>
+                                <td
+                                  role="cell"
+                                  data-label="Acciones"
+                                  aria-label="Acciones"
+                                  className="mobile-wide"
+                                >
                                   <div className="row-actions">
                                     <button
                                       className="text-button"

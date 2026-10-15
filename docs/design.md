@@ -34,6 +34,13 @@ que se adaptan al ancho de escritorio y móvil.
 
 Revisión visual de la venta manual: 1366×768, 375×667, 320×568, 390×844, 844×390 y
 568×320 con la comisión activada; también importes largos y errores de validación.
-Tablas y pestañas desplazan su propio contenedor. El resumen sólo usa registros
+Las pestañas se distribuyen en varias filas. Hasta 1000px, las tablas se presentan
+como fichas con etiquetas y todas sus acciones; en escritorio ajustan sus columnas.
+Folios, nombres y referencias largas se parten dentro de su espacio. Ninguna vista,
+menú o formulario requiere desplazamiento horizontal. Se conserva sólo el eje Y,
+excepto la venta manual compacta, que sigue cabiendo completa sin scroll.
+Revisión de ancho: 320, 360, 390, 568, 768, 820, 1000, 1024 y 1280px, incluidos
+registros con nombres/folios sin espacios e importes máximos, menús y calendarios.
+El resumen sólo usa registros
 de la base propia de Administración. La base compartida queda de sólo lectura
 para identificar tickets solicitados explícitamente.
