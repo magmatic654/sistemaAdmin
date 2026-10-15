@@ -15,8 +15,6 @@ import {
   X,
   ReceiptText,
   Banknote,
-  ClipboardCheck,
-  LockKeyhole,
 } from "lucide-react";
 import type {
   AdminState,
@@ -38,8 +36,7 @@ import {
   MovementForm,
   PaymentForm,
   TicketLookup,
-  SaleReviewForm,
-  methodOptions,
+  FolioForm,
   type Write,
 } from "./forms";
 
@@ -53,7 +50,7 @@ type Dialog = {
     | "detail"
     | "payment"
     | "payout"
-    | "review"
+    | "folio"
     | "void";
   source?: Sale;
   initial?: Employee;
@@ -66,7 +63,6 @@ const sections = [
   { id: "ganancia" as const, label: "Ganancia", icon: Wallet },
   { id: "pagos" as const, label: "Pagos pendientes", icon: Banknote },
   { id: "historial" as const, label: "Historial", icon: ReceiptText },
-  { id: "revision" as const, label: "Ventas por revisar", icon: ClipboardCheck },
   { id: "empleados" as const, label: "Empleados", icon: Users },
 ];
 const panels = [
@@ -75,11 +71,15 @@ const panels = [
   { id: "comisiones" as const, label: "Comisiones" },
 ];
 
+function printedFolio(value: string | null) {
+  return value && !/^MAN-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : null;
+}
+
 function Status({ m }: { m: Movement }) {
   if (!m.voided_at && m.kind === "entrada" && m.review_status === "pending")
-    return <span className="pill review-pill">Requiere revisión</span>;
-  if (!m.voided_at && m.review_status === "approved")
-    return <span className="pill manual-approved">Manual aprobada</span>;
+    return <span className="pill neutral">Sin folio</span>;
   return (
     <span
       className={
@@ -144,20 +144,19 @@ export default function Dashboard({ today, initialSection = "registro" }: {
   const noticeRef = useRef<HTMLDivElement>(null);
   let view = "entradas";
   if (section === "empleados") view = "comisiones";
-  else if (section === "revision") view = "revision";
   else if (section === "pagos")
     view = payee === "empleados" ? "comisiones-pendientes" : "proveedores";
   else if (section === "historial")
     view = { ventas: "entradas", salidas: "salidas", comisiones: "comisiones" }[panel];
-  const globalView = section === "pagos" || section === "revision";
+  const globalView = section === "pagos";
   const queryRange = globalView
     ? { from: "2000-01-01", to: "2100-12-31" }
     : range;
   const queryKey = [view, queryRange.from, queryRange.to, page].join(":");
   useEffect(() => {
     const url = new URL(window.location.href);
-    if (url.searchParams.get("seccion") === "resumen") {
-      url.searchParams.set("seccion", "ganancia");
+    if (["resumen", "revision"].includes(url.searchParams.get("seccion") || "")) {
+      url.searchParams.set("seccion", parseSection(url.searchParams.get("seccion")));
       window.history.replaceState(null, "", url.pathname + url.search + url.hash);
     }
     function restore() {
@@ -255,12 +254,12 @@ export default function Dashboard({ today, initialSection = "registro" }: {
       setToast((error as Error).message);
     }
   }
-  async function detail(movement: Pick<Movement, "id">, review = false) {
+  async function detail(movement: Pick<Movement, "id">, folio = false) {
     try {
       const response = await fetch("/api/admin?detail=" + movement.id);
       const result = await response.json();
       if (!response.ok) throw Error(result.error);
-      setDialog({ ...result, type: review ? "review" : "detail" });
+      setDialog({ ...result, type: folio ? "folio" : "detail" });
     } catch (error) {
       setToast((error as Error).message);
     }
@@ -305,7 +304,9 @@ export default function Dashboard({ today, initialSection = "registro" }: {
                 <tr key={m.id} role="row">
                   <td role="cell" data-label="Fecha" className="mobile-wide">
                     {shortDate(m.date)}
-                    {m.source_folio && !m.source_folio.startsWith("MAN-") && <small>Ticket {m.source_folio}</small>}
+                    {printedFolio(m.source_folio || m.manual_folio) && (
+                      <small>Ticket {printedFolio(m.source_folio || m.manual_folio)}</small>
+                    )}
                   </td>
                   <td
                     role="cell"
@@ -419,118 +420,6 @@ export default function Dashboard({ today, initialSection = "registro" }: {
     );
   }
 
-  function reviewList() {
-    return (
-      <section
-        className="review-queue"
-        aria-label="Ventas por revisar de todas las fechas"
-      >
-        <div className="review-queue-heading">
-          <div>
-            <p>
-              {data!.reviewCount} {data!.reviewCount === 1 ? "venta" : "ventas"}{" "}
-              · Todas las fechas
-            </p>
-          </div>
-          <strong className="number">{money(data!.reviewTotal)}</strong>
-        </div>
-        <div className="review-sales-list">
-          {data?.movements.map((m) => {
-            const lines = m.items.length
-              ? m.items
-              : [
-                  {
-                    description: m.concept,
-                    quantity: 1,
-                    unitCents: m.total_cents,
-                    totalCents: m.total_cents,
-                  },
-                ];
-            const renderLine = (
-              line: Movement["items"][number],
-              index: number,
-            ) => (
-              <li key={index}>
-                <h3>{line.description}</h3>
-                <div className="review-line-prices">
-                  <span>
-                    {line.quantity} × {money(line.unitCents)}
-                  </span>
-                  <strong className="number">{money(line.totalCents)}</strong>
-                </div>
-              </li>
-            );
-            return (
-              <article className="review-sale-card" key={m.id}>
-                <div className="review-sale-topline">
-                  <span className="pill review-pill">Requiere revisión</span>
-                  <time dateTime={m.date}>{shortDate(m.date)}</time>
-                </div>
-                <ul className="review-sale-items">
-                  {lines.slice(0, 3).map(renderLine)}
-                </ul>
-                {lines.length > 3 && (
-                  <details className="review-extra-items">
-                    <summary>Ver {lines.length - 3} artículos más</summary>
-                    <ul className="review-sale-items">
-                      {lines.slice(3).map(renderLine)}
-                    </ul>
-                  </details>
-                )}
-                <dl className="review-sale-facts">
-                  <div>
-                    <dt>Cliente</dt>
-                    <dd>{m.contact || "Público general"}</dd>
-                  </div>
-                  <div>
-                    <dt>Forma de pago</dt>
-                    <dd>
-                      {methodOptions.find((option) => option.value === m.method)
-                        ?.label || m.method}
-                    </dd>
-                  </div>
-                  {m.commission_cents ? (
-                    <div className="review-commission-fact">
-                      <dt>Comisión congelada</dt>
-                      <dd>
-                        {m.employee_name}
-                        <strong className="number">
-                          {money(m.commission_cents)}
-                        </strong>
-                      </dd>
-                    </div>
-                  ) : (
-                    <div>
-                      <dt>Comisión</dt>
-                      <dd>Sin comisión</dd>
-                    </div>
-                  )}
-                </dl>
-                <div className="review-sale-footer">
-                  <div>
-                    <span>Total de la venta</span>
-                    <strong className="number">{money(m.total_cents)}</strong>
-                  </div>
-                  <button
-                    className="button secondary review-action"
-                    onClick={() => void detail(m, true)}
-                  >
-                    Revisar venta
-                    <ChevronRight size={21} aria-hidden="true" />
-                  </button>
-                </div>
-              </article>
-            );
-          })}
-        </div>
-        {!data?.movements.length && (
-          <div className="empty">No hay ventas por revisar</div>
-        )}
-        {pageControls()}
-      </section>
-    );
-  }
-
   function employeePayables() {
     const balances = new Map<string, { name: string; amount: number; count: number }>();
     for (const commission of commissions) {
@@ -608,7 +497,7 @@ export default function Dashboard({ today, initialSection = "registro" }: {
                   >
                     <strong>{c.concept}</strong>
                     {c.contact && <small>{c.contact}</small>}
-                    {c.source_folio && !c.source_folio.startsWith("MAN-") && (
+                    {printedFolio(c.source_folio) && (
                       <small>Ticket {c.source_folio}</small>
                     )}
                   </td>
@@ -626,16 +515,14 @@ export default function Dashboard({ today, initialSection = "registro" }: {
                         (c.paid_on
                           ? "success"
                           : c.review_status === "pending"
-                            ? "frozen-pill"
+                            ? "neutral"
                             : "pending")
                       }
                     >
                       {c.paid_on ? (
                         "Pagada"
                       ) : c.review_status === "pending" ? (
-                        <>
-                          <LockKeyhole size={13} /> Congelada
-                        </>
+                        "Sin folio"
                       ) : (
                         "Pendiente"
                       )}
@@ -652,7 +539,7 @@ export default function Dashboard({ today, initialSection = "registro" }: {
                         className="text-button"
                         onClick={() => void detail({ id: c.movement_id }, true)}
                       >
-                        Revisar venta
+                        Completar folio
                       </button>
                     )}
                     {!c.paid_on && c.review_status !== "pending" && (
@@ -685,7 +572,7 @@ export default function Dashboard({ today, initialSection = "registro" }: {
         detail: "Detalle",
         payment: "Registrar pago",
         payout: "Liquidar comisiones",
-        review: "Revisar venta",
+        folio: "Completar folio",
         void: "Anular registro",
       }[dialog.type]
     : "";
@@ -707,8 +594,6 @@ export default function Dashboard({ today, initialSection = "registro" }: {
               href={"?seccion=" + item.id}
               className={section === item.id ? "active" : ""}
               aria-current={section === item.id ? "page" : undefined}
-              aria-label={item.id === "revision" && data?.reviewCount
-                ? `${item.label}: ${data.reviewCount} ${data.reviewCount === 1 ? "pendiente" : "pendientes"}` : undefined}
               onClick={(event) => {
                 if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
                 event.preventDefault();
@@ -717,11 +602,6 @@ export default function Dashboard({ today, initialSection = "registro" }: {
             >
               <item.icon size={23} aria-hidden="true" />
               <span>{item.label}</span>
-              {item.id === "revision" && !!data?.reviewCount && (
-                <span className="navigation-count" aria-hidden="true">
-                  {data.reviewCount > 99 ? "99+" : data.reviewCount}
-                </span>
-              )}
             </a>
           ))}
         </nav>
@@ -811,7 +691,7 @@ export default function Dashboard({ today, initialSection = "registro" }: {
                 <ScanLine size={40} />
               </span>
               <span>
-                Escanear ticket<small>Escanear · Revisar · Confirmar</small>
+                Escanear ticket<small>Escanear · Confirmar</small>
               </span>
               <ChevronRight size={24} />
             </button>
@@ -926,35 +806,8 @@ export default function Dashboard({ today, initialSection = "registro" }: {
                       </div>
                     </div>
                   </section>
-                  {summary!.pendingSalesCount > 0 && (
-                    <section
-                      className="review-period-summary"
-                      aria-label="Ventas por revisar del periodo"
-                    >
-                      <div className="review-period-copy">
-                        <span>Ventas por revisar</span>
-                        <strong className="number">
-                          {money(summary!.pendingIncome)}
-                        </strong>
-                        <small>
-                          {summary!.pendingSalesCount}{" "}
-                          {summary!.pendingSalesCount === 1
-                            ? "venta del periodo"
-                            : "ventas del periodo"}{" "}
-                          · Sin afectar la ganancia
-                        </small>
-                        {summary!.pendingCommissions > 0 && (
-                          <small>
-                            Comisiones en espera:{" "}
-                            <b>{money(summary!.pendingCommissions)}</b>
-                          </small>
-                        )}
-                      </div>
-                    </section>
-                  )}
                     </>
                   )}
-                  {section === "revision" && reviewList()}
                   {section === "historial" && (
                     <section aria-label="Historial del periodo">
                       {panel === "comisiones" ? commissionTable() : movementTable()}
@@ -1025,13 +878,6 @@ export default function Dashboard({ today, initialSection = "registro" }: {
                             <th
                               scope="col"
                               role="columnheader"
-                              className="align-right"
-                            >
-                              Por revisar
-                            </th>
-                            <th
-                              scope="col"
-                              role="columnheader"
                               aria-label="Acciones"
                             />
                           </tr>
@@ -1051,12 +897,6 @@ export default function Dashboard({ today, initialSection = "registro" }: {
                                 .reduce((sum, c) => sum + c.amount_cents, 0),
                               paid = rows
                                 .filter((c) => c.paid_on)
-                                .reduce((sum, c) => sum + c.amount_cents, 0),
-                              frozen = rows
-                                .filter(
-                                  (c) =>
-                                    !c.paid_on && c.review_status === "pending",
-                                )
                                 .reduce((sum, c) => sum + c.amount_cents, 0);
                             return (
                               <tr
@@ -1102,13 +942,6 @@ export default function Dashboard({ today, initialSection = "registro" }: {
                                   className="number align-right"
                                 >
                                   {money(paid)}
-                                </td>
-                                <td
-                                  role="cell"
-                                  data-label="Por revisar"
-                                  className="number align-right"
-                                >
-                                  {money(frozen)}
                                 </td>
                                 <td
                                   role="cell"
@@ -1218,11 +1051,11 @@ export default function Dashboard({ today, initialSection = "registro" }: {
               onVoid={() =>
                 setDialog({ ...dialog, type: "void", id: dialog.movement!.id })
               }
-              onReview={() => setDialog({ ...dialog, type: "review" })}
+              onFolio={() => setDialog({ ...dialog, type: "folio" })}
             />
           )}
-          {dialog.type === "review" && dialog.movement && (
-            <SaleReviewForm
+          {dialog.type === "folio" && dialog.movement && (
+            <FolioForm
               movement={dialog.movement}
               write={write}
               onDone={saved}

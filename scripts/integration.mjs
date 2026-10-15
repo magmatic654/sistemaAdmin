@@ -125,13 +125,6 @@ try {
     params = new URLSearchParams({ from: day, to: day });
   const run = (action, payload, id = randomUUID()) =>
     mutate(action, payload, id);
-  async function approve(id) {
-    const { movement } = await movementDetail(id);
-    return run("movement.review.approve", {
-      id,
-      reviewVersion: movement.review_version,
-    });
-  }
   const service = (
     await sourceWriter.query("SELECT id,nombre FROM public.servicios LIMIT 1")
   ).rows[0];
@@ -888,13 +881,7 @@ try {
       ).rows.length,
       0,
     );
-    const frozen = await payoutPreview(employee.id, "day", day);
-    assert.equal(
-      frozen.commissions.some((c) => c.movement_id === saved.id),
-      false,
-    );
-    assert.ok(frozen.frozenCents >= 1160);
-    await approve(saved.id);
+    assert.equal(detail.movement.review_status, "approved");
     const preview = await payoutPreview(employee.id, "day", day),
       commission = preview.commissions.find((c) => c.movement_id === saved.id);
     assert.ok(commission);
@@ -1019,7 +1006,7 @@ try {
     );
     assert.equal(records.rows.length, 1);
   });
-  await test("compact manual sale generates its identity/date and retries atomically without hidden client fields", async () => {
+  await test("compact manual sale requires its printed folio, generates the date and retries atomically", async () => {
     const request = randomUUID(),
       payload = {
         description: "Venta compacta QA",
@@ -1028,7 +1015,7 @@ try {
         method: "tarjeta",
         contact: "Cliente compacto QA",
         commission: { employeeId: employee.id, mode: "fixed", value: "25.10" },
-        folio: "IGNORAR",
+        folio: "PAPEL-COMPACTO-" + randomUUID(),
         date: "2000-01-01",
         received: "0.01",
         vatIncluded: true,
@@ -1042,7 +1029,8 @@ try {
     ]);
     assert.equal(results[0].id, results[1].id);
     const { movement, payments } = await movementDetail(results[0].id);
-    assert.equal(movement.manual_folio, "MAN-" + request);
+    assert.equal(movement.manual_folio, payload.folio);
+    assert.equal(movement.review_status, "approved");
     assert.equal(movement.date, day);
     assert.equal(movement.source_id, null);
     assert.equal(movement.total_cents, 25100);
@@ -1062,6 +1050,7 @@ try {
   });
   await test("compact manual sale keeps commission optional and invalid commissions roll back the whole sale", async () => {
     const payload = {
+      folio: "QA-OPCIONAL-" + randomUUID(),
       description: "Servicio compacto QA",
       quantity: 1,
       unitPrice: "100",
@@ -1079,6 +1068,7 @@ try {
     await assert.rejects(
       run("sale.manual.create", {
         ...payload,
+        folio: "QA-COMISION-INVALIDA-" + randomUUID(),
         commission: { employeeId: employee.id, mode: "fixed", value: "101" },
       }),
       /no superar/,
@@ -1088,7 +1078,10 @@ try {
         .rows[0].count,
       before,
     );
-    const another = await run("sale.manual.create", payload);
+    const another = await run("sale.manual.create", {
+      ...payload,
+      folio: "QA-OTRA-" + randomUUID(),
+    });
     assert.notEqual(
       another.id,
       result.id,
@@ -1315,8 +1308,6 @@ try {
       commission: null,
       ...extra,
     });
-    // These fixtures exercise confirmed accounting; pending captures have separate coverage below.
-    if (kind === "entrada") await approve(saved.id);
     return saved;
   }
   async function accountingSummary(from, to = from) {
@@ -1505,802 +1496,268 @@ try {
     assert.ok(preservedExpense.movement.voided_at);
     assert.equal(preservedExpense.payments.length, 1);
   });
-  const reviewEmployee = await run("employee.save", {
-    name: "Revisión de ventas QA",
+  const folioEmployee = await run("employee.save", {
+    name: "Folios y comisiones QA",
     phone: "",
     position: "Técnico",
   });
-  async function reviewSale(extra = {}) {
-    return run("movement.create", {
-      ...input,
-      manual: true,
-      folio: "QA-REVISION-" + randomUUID(),
-      origin: "manual",
-      date: "2003-01-15",
-      commission: {
-        employeeId: reviewEmployee.id,
-        mode: "fixed",
-        value: "11.60",
-      },
-      ...extra,
-    });
+  const compactSale = (extra = {}) => ({
+    folio: "QA-FOLIO-" + randomUUID(),
+    description: "Servicio con folio QA",
+    quantity: 2,
+    unitPrice: "500.00",
+    method: "efectivo",
+    contact: "Cliente de prueba QA",
+    commission: { employeeId: folioEmployee.id, value: "100.00" },
+    ...extra,
+  });
+  // These direct fixtures represent pre-existing records, only inside this run's
+  // disposable clone. New API registrations must never produce this state.
+  async function legacySale(extra = {}) {
+    assert.equal(
+      (await connection.query("SELECT current_database() AS name")).rows[0].name,
+      database,
+    );
+    const id = randomUUID();
+    const commissionId = randomUUID();
+    const paymentId = randomUUID();
+    const folio = extra.folio || "MAN-" + randomUUID();
+    const employeeId = extra.employeeId || folioEmployee.id;
+    const legacyDate = extra.date || "2003-01-15";
+    await connection.query(
+      `INSERT INTO administracion.movements
+       (id,kind,date,concept,category,contact,items,subtotal_cents,tax_cents,total_cents,
+        method,manual_folio,manual_origin,manual_ticket_code,review_status)
+       VALUES($1,'entrada',$2,'Servicio histórico QA','Venta manual','Cliente histórico QA',
+        $3::jsonb,10000,1600,11600,'efectivo',$4,'manual',$5,'pending')`,
+      [id, legacyDate, JSON.stringify([
+        { description: "Servicio histórico QA", quantity: 1, unitCents: 11600, totalCents: 11600 },
+      ]), folio, extra.ticketCode || null],
+    );
+    await connection.query(
+      "INSERT INTO administracion.payments(id,movement_id,date,amount_cents,method) VALUES($1,$2,$3,11600,'efectivo')",
+      [paymentId, id, legacyDate],
+    );
+    await connection.query(
+      "INSERT INTO administracion.commissions(id,movement_id,employee_id,amount_cents,mode) VALUES($1,$2,$3,1160,'fixed')",
+      [commissionId, id, employeeId],
+    );
+    await connection.query(
+      "INSERT INTO administracion.audit(action,entity_id,details) VALUES('legacy.fixture',$1,$2::jsonb)",
+      [id, JSON.stringify({ legacy: true, folio })],
+    );
+    return { id, commissionId, paymentId, folio };
   }
-  async function validationPayload(id, sourceId, extra = {}) {
+  async function completePayload(id, folio = "PAPEL-" + randomUUID()) {
     const { movement } = await movementDetail(id);
-    const [sale] = await lookupSales("LLA1:V:" + sourceId);
-    assert.ok(sale);
-    assert.match(sale.fingerprint, /^[a-f\d]{64}$/);
-    return {
-      id,
-      reviewVersion: movement.review_version,
-      sourceKind: sale.kind,
-      sourceId: sale.id,
-      sourceFingerprint: sale.fingerprint,
-      ...extra,
-    };
+    return { id, reviewVersion: movement.review_version, folio };
   }
-  await test("manual sales stay outside confirmed totals and appear separately in their period and the global review queue", async () => {
-    const compact = await run("sale.manual.create", {
-      description: "Revisión compacta QA",
-      quantity: 1,
-      unitPrice: "50",
-      method: "efectivo",
-      contact: "",
-      commission: null,
-    });
-    const saved = await reviewSale();
-    for (const id of [saved.id, compact.id]) {
-      const { movement } = await movementDetail(id);
-      assert.equal(movement.source_id, null);
-      assert.equal(movement.review_status, "pending");
-      assert.equal(movement.review_version, 1);
+  await test("manual entry requires a real nonempty folio and rejects internal MAN references without partial writes", async () => {
+    const before = (await connection.query(
+      "SELECT (SELECT count(*) FROM administracion.movements) AS movements,(SELECT count(*) FROM administracion.payments) AS payments,(SELECT count(*) FROM administracion.commissions) AS commissions",
+    )).rows[0];
+    for (const folio of [undefined, null, "", "  ", "x".repeat(161), "MAN-" + randomUUID(), " man-" + randomUUID() + " "]) {
+      await assert.rejects(run("sale.manual.create", compactSale({ folio })), /Folio|folio|MAN-/);
+      await assert.rejects(run("movement.create", {
+        ...input, manual: true, folio, origin: "manual",
+      }), /Folio|folio|MAN-/);
     }
-    const unrelated = new URLSearchParams({
-      from: "2099-01-01",
-      to: "2099-01-31",
-      view: "revision",
-    });
-    const queue = await getState(unrelated);
-    assert.ok(queue.reviewCount >= 2);
-    assert.equal(queue.total, queue.reviewCount);
-    assert.ok(queue.movements.some((movement) => movement.id === saved.id));
-    assert.ok(
-      queue.movements.every((movement) => movement.review_status === "pending"),
-    );
-    const pending = (
-      await connection.query(
-        "SELECT count(*),COALESCE(sum(total_cents),0) AS total FROM administracion.manual_ledger WHERE kind='entrada' AND review_status='pending' AND NOT source_cancelled AND voided_at IS NULL",
-      )
-    ).rows[0];
-    assert.equal(queue.reviewCount, Number(pending.count));
-    assert.equal(queue.reviewTotal, Number(pending.total));
-    assert.equal(queue.summary.pendingIncome, 0);
-    assert.equal(queue.summary.pendingCommissions, 0);
-    assert.equal(queue.summary.pendingSalesCount, 0);
-    const state = await getState(
-      new URLSearchParams({ from: "2003-01-15", to: "2003-01-15" }),
-    );
-    assert.equal(state.summary.income, 0);
-    assert.equal(state.summary.commissions, 0);
-    assert.equal(state.summary.profit, 0);
-    assert.equal(state.summary.pendingIncome, 11600);
-    assert.equal(state.summary.pendingCommissions, 1160);
-    assert.equal(state.summary.pendingSalesCount, 1);
-    assert.equal(state.summary.collected, 11600);
-    assert.equal(state.summary.cash, 11600);
-    assert.equal(state.reviewTotal, queue.reviewTotal);
-    assert.ok(state.summary.employeeFrozen >= 1160);
-    await run("movement.void", {
-      id: saved.id,
-      reason: "Fin de revisión inicial QA",
-    });
-    const refreshed = await getState(unrelated);
-    assert.equal(refreshed.reviewCount, queue.reviewCount - 1);
-    assert.equal(refreshed.reviewTotal, queue.reviewTotal - 11600);
-    const voided = await getState(
-      new URLSearchParams({ from: "2003-01-15", to: "2003-01-15" }),
-    );
-    assert.equal(voided.summary.pendingIncome, 0);
-    assert.equal(voided.summary.pendingCommissions, 0);
-    assert.equal(voided.summary.pendingSalesCount, 0);
-    assert.equal(
-      refreshed.movements.some((movement) => movement.id === saved.id),
-      false,
-    );
+    assert.deepEqual((await connection.query(
+      "SELECT (SELECT count(*) FROM administracion.movements) AS movements,(SELECT count(*) FROM administracion.payments) AS payments,(SELECT count(*) FROM administracion.commissions) AS commissions",
+    )).rows[0], before);
+    const printed = compactSale({ folio: "MAN-123-" + randomUUID(), commission: null });
+    const saved = await run("sale.manual.create", printed);
+    assert.equal((await movementDetail(saved.id)).movement.manual_folio, printed.folio);
   });
-  await test("confirmed sales and active expenses determine profit while pending sales and frozen commissions stay separate", async () => {
-    const totalsEmployee = await run("employee.save", {
-      name: "Totales confirmados QA",
-      phone: "",
-      position: "Técnico",
-    });
-    const date = "2004-01-15";
-    const period = new URLSearchParams({ from: date, to: date });
-    const before = await getState(period);
-    const pending = await reviewSale({
-      date,
-      commission: { employeeId: totalsEmployee.id, value: "11.60" },
-    });
-    const confirmed = await reviewSale({
-      date,
-      items: [
-        { description: "Venta aprobada QA", quantity: 1, unitPrice: "300" },
-      ],
-      received: "300",
-      commission: { employeeId: totalsEmployee.id, value: "30" },
-    });
-    await approve(confirmed.id);
-    await accountingMovement("salida", date, "100");
-    let state = await getState(period);
-    assert.equal(state.summary.income, 30000);
-    assert.equal(state.summary.expenses, 10000);
-    assert.equal(state.summary.commissions, 3000);
-    assert.equal(state.summary.profit, 17000);
-    assert.equal(state.summary.pendingIncome, 11600);
-    assert.equal(state.summary.pendingCommissions, 1160);
-    assert.equal(state.summary.pendingSalesCount, 1);
-    assert.equal(state.reviewCount, before.reviewCount + 1);
-    assert.equal(state.reviewTotal, before.reviewTotal + 11600);
-    assert.equal(
-      state.summary.employeePayable,
-      before.summary.employeePayable + 3000,
-    );
-    assert.equal(
-      state.summary.employeeFrozen,
-      before.summary.employeeFrozen + 1160,
-    );
-    const payout = await payoutPreview(totalsEmployee.id, "all", day);
-    assert.equal(payout.totalCents, 3000);
-    assert.equal(payout.commissions.length, 1);
-    assert.equal(payout.commissions[0].movement_id, confirmed.id);
-    assert.equal(payout.frozenCents, 1160);
-    const outside = await getState(
-      new URLSearchParams({
-        from: "2099-01-01",
-        to: "2099-01-31",
-        view: "revision",
-      }),
-    );
-    assert.equal(outside.summary.pendingIncome, 0);
-    assert.equal(outside.summary.pendingSalesCount, 0);
-    assert.equal(outside.reviewTotal, state.reviewTotal);
-    assert.equal(outside.reviewCount, state.reviewCount);
-    assert.ok(outside.movements.some((movement) => movement.id === pending.id));
-    await run("movement.void", {
-      id: pending.id,
-      reason: "Descartar captura pendiente QA",
-    });
-    state = await getState(period);
-    assert.equal(state.summary.income, 30000);
-    assert.equal(state.summary.expenses, 10000);
-    assert.equal(state.summary.commissions, 3000);
-    assert.equal(state.summary.profit, 17000);
-    assert.equal(state.summary.pendingIncome, 0);
-    assert.equal(state.summary.pendingCommissions, 0);
-    assert.equal(state.summary.pendingSalesCount, 0);
-    assert.equal(state.reviewTotal, before.reviewTotal);
-    assert.equal(state.reviewCount, before.reviewCount);
-    assert.equal(state.summary.employeeFrozen, before.summary.employeeFrozen);
-  });
-  await test("a pending sale with a full-value commission never creates a loss, and payment does not deduct it twice", async () => {
-    const employee = await run("employee.save", {
-      name: "Comisión completa por revisar QA",
-      phone: "",
-      position: "Técnico",
-    });
-    const date = "2004-02-15";
-    const paymentDate = "2004-02-16";
-    const period = new URLSearchParams({ from: date, to: date });
-    const before = await getState(period);
-    const saved = await reviewSale({
-      date,
-      items: [
-        {
-          description: "Venta con comisión completa QA",
-          quantity: 1,
-          unitPrice: "500",
-        },
-      ],
-      received: "500",
-      commission: { employeeId: employee.id, value: "500" },
-    });
-    let state = await getState(period);
-    assert.equal(state.summary.income, 0);
-    assert.equal(state.summary.expenses, 0);
-    assert.equal(state.summary.commissions, 0);
-    assert.equal(state.summary.profit, 0);
-    assert.equal(state.summary.pendingIncome, 50000);
-    assert.equal(state.summary.pendingCommissions, 50000);
-    assert.equal(state.summary.pendingSalesCount, 1);
-    assert.equal(state.summary.employeePayable, before.summary.employeePayable);
-    assert.equal(
-      state.summary.employeeFrozen,
-      before.summary.employeeFrozen + 50000,
-    );
-    const frozen = await payoutPreview(employee.id, "all", paymentDate);
-    assert.equal(frozen.totalCents, 0);
-    assert.equal(frozen.commissions.length, 0);
-    assert.equal(frozen.frozenCents, 50000);
-    assert.equal(frozen.frozenCount, 1);
-
-    await approve(saved.id);
-    state = await getState(period);
-    assert.equal(state.summary.income, 50000);
-    assert.equal(state.summary.commissions, 50000);
-    assert.equal(state.summary.profit, 0);
-    assert.equal(state.summary.pendingIncome, 0);
-    assert.equal(state.summary.pendingCommissions, 0);
-    assert.equal(state.summary.pendingSalesCount, 0);
-    assert.equal(
-      state.summary.employeePayable,
-      before.summary.employeePayable + 50000,
-    );
-    assert.equal(state.summary.employeeFrozen, before.summary.employeeFrozen);
-
-    const { movement } = await movementDetail(saved.id);
-    await run("commission.pay", {
-      id: movement.commission_id,
-      date: paymentDate,
-    });
-    state = await getState(period);
-    assert.equal(state.summary.income, 50000);
-    assert.equal(state.summary.commissions, 50000);
-    assert.equal(state.summary.profit, 0);
-    assert.equal(state.summary.employeePayable, before.summary.employeePayable);
-    assert.equal(state.summary.employeeFrozen, before.summary.employeeFrozen);
-    const paymentPeriod = await getState(
-      new URLSearchParams({ from: paymentDate, to: paymentDate }),
-    );
-    assert.equal(paymentPeriod.summary.commissions, 0);
-    assert.equal(paymentPeriod.summary.profit, 0);
-    assert.equal(paymentPeriod.summary.commissionPaid, 50000);
-    const paid = await payoutPreview(employee.id, "all", paymentDate);
-    assert.equal(paid.totalCents, 0);
-    assert.equal(paid.frozenCents, 0);
-    assert.equal(paid.frozenCount, 0);
-  });
-  await test("frozen commissions cannot be paid individually, by IDs or by a settlement snapshot", async () => {
-    const saved = await reviewSale();
+  await test("manual folios enter sales and profit immediately and their commission is paid exactly once", async () => {
+    const before = await getState(params);
+    const request = randomUUID();
+    const payload = compactSale();
+    const [saved, retried] = await Promise.all([
+      run("sale.manual.create", payload, request),
+      run("sale.manual.create", payload, request),
+    ]);
+    assert.deepEqual(retried, saved);
     const detail = await movementDetail(saved.id);
-    const reviewPeriod = new URLSearchParams({
-      from: "2003-01-15",
-      to: "2003-01-15",
-    });
-    const beforeApproval = await getState(reviewPeriod);
-    assert.equal(beforeApproval.summary.income, 0);
-    assert.equal(beforeApproval.summary.commissions, 0);
-    assert.equal(beforeApproval.summary.profit, 0);
-    assert.equal(beforeApproval.summary.pendingIncome, 11600);
-    assert.equal(beforeApproval.summary.pendingCommissions, 1160);
-    assert.equal(beforeApproval.summary.pendingSalesCount, 1);
-    const preview = await payoutPreview(reviewEmployee.id, "all", day);
-    assert.equal(preview.commissions.length, 0);
+    assert.equal(detail.movement.review_status, "approved");
+    assert.equal(detail.movement.manual_folio, payload.folio);
+    assert.equal(detail.movement.source_id, null);
+    assert.equal(detail.movement.total_cents, 100000);
+    assert.equal(detail.movement.commission_cents, 10000);
+    assert.equal(detail.payments.length, 1);
+    let state = await getState(params);
+    assert.equal(state.summary.income, before.summary.income + 100000);
+    assert.equal(state.summary.commissions, before.summary.commissions + 10000);
+    assert.equal(state.summary.profit, before.summary.profit + 90000);
+    assert.equal(state.summary.pendingIncome, before.summary.pendingIncome);
+    assert.equal(state.summary.employeeFrozen, before.summary.employeeFrozen);
+    const preview = await payoutPreview(folioEmployee.id, "all", day);
+    assert.equal(preview.commissions.length, 1);
+    assert.equal(preview.totalCents, 10000);
+    const payment = snapshotPayload(preview), paymentRequest = randomUUID();
+    const paid = await run("commission.batchPay", payment, paymentRequest);
+    assert.deepEqual(await run("commission.batchPay", payment, paymentRequest), paid);
+    state = await getState(params);
+    assert.equal(state.summary.profit, before.summary.profit + 90000);
+    assert.equal(state.summary.commissions, before.summary.commissions + 10000);
+    assert.equal(state.summary.employeePayable, before.summary.employeePayable);
+    assert.equal((await payoutPreview(folioEmployee.id, "all", day)).totalCents, 0);
+    await assert.rejects(run("commission.pay", { id: detail.movement.commission_id, date: day }), /ya está pagada/);
+    await assert.rejects(run("commission.batchPay", payment), /cambiaron/);
+  });
+  await test("printed folio duplicate detection ignores letter case and surrounding whitespace across manual and scanned entries", async () => {
+    const payload = compactSale({ commission: null });
+    const saved = await run("sale.manual.create", { ...payload, folio: "  " + payload.folio + "  " });
+    assert.equal((await movementDetail(saved.id)).movement.manual_folio, payload.folio);
+    await assert.rejects(run("sale.manual.create", { ...payload, folio: payload.folio.toLowerCase() }), /ya está registrado/);
+    const sourceId = await ticket("blanca", { folio: payload.folio.toLowerCase() });
+    assert.equal((await lookupSales("LLA1:V:" + sourceId))[0].registeredId, saved.id);
+    await assert.rejects(run("movement.create", {
+      ...input, ticketCode: "LLA1:V:" + sourceId, commission: null,
+    }), /ya está registrado/);
+    const scannedId = await ticket();
+    const [scanned] = await lookupSales("LLA1:V:" + scannedId);
+    await run("movement.create", { ...input, ticketCode: "LLA1:V:" + scannedId, commission: null });
+    await assert.rejects(run("sale.manual.create", compactSale({
+      folio: " " + scanned.folio.toLowerCase() + " ", commission: null,
+    })), /ya está registrado/);
+  });
+  await test("different requests racing on the same compact manual folio produce one sale", async () => {
+    const payload = compactSale({ commission: null });
+    const result = await Promise.allSettled([
+      run("sale.manual.create", payload),
+      run("sale.manual.create", { ...payload, folio: " " + payload.folio.toLowerCase() + " " }),
+    ]);
+    assert.equal(result.filter((row) => row.status === "fulfilled").length, 1);
+    assert.equal((await connection.query(
+      "SELECT count(*) FROM administracion.movements WHERE lower(btrim(manual_folio))=lower($1)", [payload.folio],
+    )).rows[0].count, "1");
+  });
+  await test("legacy records remain unchanged and frozen until the printed folio is explicitly completed", async () => {
+    const legacy = await legacySale();
+    const detail = await movementDetail(legacy.id);
+    assert.equal(detail.movement.review_status, "pending");
+    assert.equal(detail.movement.manual_folio, legacy.folio);
+    const before = await getState(new URLSearchParams({ from: "2003-01-15", to: "2003-01-15" }));
+    assert.equal(before.summary.income, 0);
+    assert.equal(before.summary.commissions, 0);
+    assert.equal(before.summary.profit, 0);
+    assert.equal(before.summary.pendingIncome, 11600);
+    const preview = await payoutPreview(folioEmployee.id, "all", day);
     assert.equal(preview.totalCents, 0);
     assert.equal(preview.frozenCents, 1160);
-    assert.equal(preview.frozenCount, 1);
-    await assert.rejects(
-      run("commission.pay", { id: detail.movement.commission_id, date: day }),
-      /revisi|congelad|aprobad/i,
-    );
-    await assert.rejects(
-      run("commission.batchPay", {
-        employeeId: reviewEmployee.id,
-        period: "all",
-        anchor: day,
-        commissionIds: [detail.movement.commission_id],
-        expectedTotalCents: 1160,
-      }),
-      /revisi|congelad|aprobad/i,
-    );
-    await assert.rejects(run("commission.batchPay", snapshotPayload(preview)));
-    assert.equal(
-      (await movementDetail(saved.id)).movement.commission_paid_on,
-      null,
-    );
-    const payload = {
-        id: saved.id,
-        reviewVersion: detail.movement.review_version,
-      },
-      request = randomUUID();
-    const approved = await run("movement.review.approve", payload, request);
-    assert.deepEqual(
-      await run("movement.review.approve", payload, request),
-      approved,
-    );
-    await assert.rejects(
-      run("movement.review.approve", payload),
-      /cambi|revisi|aprobad/i,
-    );
-    const afterApproval = await getState(reviewPeriod);
-    assert.equal(afterApproval.summary.income, 11600);
-    assert.equal(afterApproval.summary.commissions, 1160);
-    assert.equal(afterApproval.summary.profit, 10440);
-    assert.equal(afterApproval.summary.pendingIncome, 0);
-    assert.equal(afterApproval.summary.pendingCommissions, 0);
-    assert.equal(afterApproval.summary.pendingSalesCount, 0);
-    assert.equal(afterApproval.reviewTotal, beforeApproval.reviewTotal - 11600);
-    assert.equal(afterApproval.reviewCount, beforeApproval.reviewCount - 1);
-    assert.equal(
-      afterApproval.summary.employeePayable,
-      beforeApproval.summary.employeePayable + 1160,
-    );
-    assert.equal(
-      afterApproval.summary.employeeFrozen,
-      beforeApproval.summary.employeeFrozen - 1160,
-    );
-    assert.equal(afterApproval.summary.cash, beforeApproval.summary.cash);
-    const released = await payoutPreview(reviewEmployee.id, "all", day);
-    assert.equal(released.commissions.length, 1);
-    assert.equal(released.totalCents, 1160);
-    assert.equal(released.frozenCount, 0);
-    assert.equal(released.frozenCents, 0);
-    const approvedDetail = await movementDetail(saved.id);
-    assert.equal(approvedDetail.movement.review_status, "approved");
-    assert.equal(
-      approvedDetail.movement.review_version,
-      payload.reviewVersion + 1,
-    );
-    const approvalAudit = (
-      await connection.query(
-        "SELECT details FROM administracion.audit WHERE entity_id=$1 AND action='movement.review.approve.changes'",
-        [saved.id],
-      )
-    ).rows;
-    assert.equal(approvalAudit.length, 1);
-    assert.equal(
-      approvalAudit[0].details.before.movement.review_status,
-      "pending",
-    );
-    assert.equal(
-      approvalAudit[0].details.after.movement.review_status,
-      "approved",
-    );
-    assert.equal(approvalAudit[0].details.after.commission.paid_on, null);
-    const payment = snapshotPayload(released),
-      paymentRequest = randomUUID();
-    const paid = await run("commission.batchPay", payment, paymentRequest);
-    assert.deepEqual(
-      await run("commission.batchPay", payment, paymentRequest),
-      paid,
-    );
-    await assert.rejects(
-      run("commission.pay", { id: detail.movement.commission_id, date: day }),
-      /ya está pagada/,
-    );
-    const sourceId = await ticket();
-    await assert.rejects(
-      run(
-        "movement.review.validate",
-        await validationPayload(saved.id, sourceId),
-      ),
-      /pagad|historial/i,
-    );
-    assert.equal((await movementDetail(saved.id)).movement.source_id, null);
-  });
-  await test("a failed ticket search leaves the manual sale and its frozen commission unchanged", async () => {
-    const saved = await reviewSale();
-    const before = await movementDetail(saved.id);
-    assert.deepEqual(await lookupSales("LLA1:V:no-existe-" + randomUUID()), []);
-    const after = await movementDetail(saved.id);
-    assert.deepEqual(after, before);
-    await assert.rejects(
-      run("movement.review.validate", {
-        id: saved.id,
-        reviewVersion: before.movement.review_version,
-        sourceKind: "ventas",
-        sourceId: "no-existe-" + randomUUID(),
-        sourceFingerprint: "0".repeat(64),
-      }),
-      /encontr|disponible|existe/i,
-    );
-    assert.deepEqual(await movementDetail(saved.id), before);
-    await run("movement.void", {
-      id: saved.id,
-      reason: "Fin de búsqueda inexistente QA",
-    });
-  });
-  await test("ticket validation replaces real totals, VAT, items, contact and full payment without losing duplicate aliases", async () => {
-    const folio = "QA-ALIAS-" + randomUUID();
-    const retiredSourceId = "admin-qa-" + randomUUID();
-    const saved = await reviewSale({
-      folio,
-      manualTicketCode: "LLA1:V:" + retiredSourceId,
-    });
-    const before = await movementDetail(saved.id);
-    const sourceId = await ticket("blanca");
-    const oldPeriod = new URLSearchParams({
-      from: before.movement.date,
-      to: before.movement.date,
-    });
-    const oldTotals = await getState(oldPeriod);
-    const sourceTotals = await getState(params);
-    const sourceBefore = (
-      await sourceWriter.query("SELECT * FROM public.ventas WHERE id=$1", [
-        sourceId,
-      ])
-    ).rows[0];
-    const payload = await validationPayload(saved.id, sourceId),
-      request = randomUUID();
-    const validated = await run("movement.review.validate", payload, request);
-    assert.deepEqual(
-      await run("movement.review.validate", payload, request),
-      validated,
-    );
-    const detail = await movementDetail(saved.id);
-    assert.equal(detail.movement.review_status, "validated");
-    assert.equal(detail.movement.review_version, payload.reviewVersion + 1);
-    assert.equal(detail.movement.source_kind, "ventas");
-    assert.equal(detail.movement.source_id, sourceId);
-    assert.equal(detail.movement.source_origin, "blanca");
-    assert.equal(detail.movement.date, day);
-    assert.equal(detail.movement.contact, "Cliente ticket QA");
-    assert.equal(detail.movement.method, "efectivo");
-    assert.equal(detail.movement.subtotal_cents, 20000);
-    assert.equal(detail.movement.tax_cents, 3200);
-    assert.equal(detail.movement.total_cents, 23200);
-    assert.equal(detail.movement.paid_cents, 23200);
-    assert.equal(detail.movement.items.length, 1);
-    assert.equal(
-      detail.movement.items[0].description,
-      "Servicio de integración",
-    );
-    assert.equal(detail.movement.items[0].unitCents, 23200);
-    assert.equal(detail.movement.items[0].totalCents, 23200);
-    assert.equal(
-      detail.movement.commission_cents,
-      before.movement.commission_cents,
-    );
-    assert.equal(detail.payments.length, 1);
-    assert.equal(detail.payments[0].id, before.payments[0].id);
-    assert.equal(detail.payments[0].amount_cents, 23200);
-    const oldAfter = await getState(oldPeriod);
-    const sourceAfter = await getState(params);
-    assert.equal(oldAfter.summary.income, oldTotals.summary.income);
-    assert.equal(oldAfter.summary.commissions, oldTotals.summary.commissions);
-    assert.equal(oldAfter.summary.profit, oldTotals.summary.profit);
-    assert.equal(
-      oldAfter.summary.pendingIncome,
-      oldTotals.summary.pendingIncome - 11600,
-    );
-    assert.equal(
-      oldAfter.summary.pendingCommissions,
-      oldTotals.summary.pendingCommissions - 1160,
-    );
-    assert.equal(
-      oldAfter.summary.pendingSalesCount,
-      oldTotals.summary.pendingSalesCount - 1,
-    );
-    assert.equal(
-      sourceAfter.summary.income,
-      sourceTotals.summary.income + 23200,
-    );
-    assert.equal(
-      sourceAfter.summary.commissions,
-      sourceTotals.summary.commissions + 1160,
-    );
-    assert.equal(
-      sourceAfter.summary.profit,
-      sourceTotals.summary.profit + 22040,
-    );
-    assert.equal(sourceAfter.reviewTotal, sourceTotals.reviewTotal - 11600);
-    assert.equal(sourceAfter.reviewCount, sourceTotals.reviewCount - 1);
-    assert.equal(
-      sourceAfter.summary.employeePayable,
-      sourceTotals.summary.employeePayable + 1160,
-    );
-    assert.equal(
-      sourceAfter.summary.employeeFrozen,
-      sourceTotals.summary.employeeFrozen - 1160,
-    );
-    assert.deepEqual(
-      (
-        await sourceWriter.query("SELECT * FROM public.ventas WHERE id=$1", [
-          sourceId,
-        ])
-      ).rows[0],
-      sourceBefore,
-    );
-    const changes = (
-      await connection.query(
-        "SELECT details FROM administracion.audit WHERE entity_id=$1 AND action='movement.review.validate.changes'",
-        [saved.id],
-      )
-    ).rows;
-    assert.equal(changes.length, 1);
-    assert.equal(changes[0].details.before.movement.manual_folio, folio);
-    assert.equal(Number(changes[0].details.before.movement.total_cents), 11600);
-    assert.equal(Number(changes[0].details.after.movement.total_cents), 23200);
-    assert.equal(
-      changes[0].details.before.payments[0].id,
-      changes[0].details.after.payments[0].id,
-    );
-    assert.equal(
-      (await lookupSales("LLA1:V:" + sourceId))[0].registeredId,
-      saved.id,
-    );
-    await assert.rejects(
-      run("movement.review.validate", payload),
-      /cambi|valid|revisi/i,
-    );
-    await assert.rejects(
-      run("movement.create", {
-        ...input,
-        source: { kind: "ventas", id: sourceId },
-        useTicketData: true,
-        received: "232.00",
-      }),
-      /ya está registrado/,
-    );
-    await assert.rejects(reviewSale({ folio }), /ya está registrado/);
-    await ticket("negra", { id: retiredSourceId });
-    assert.equal(
-      (await lookupSales("LLA1:V:" + retiredSourceId))[0].registeredId,
-      saved.id,
-    );
-    await assert.rejects(
-      run("movement.create", {
-        ...input,
-        source: { kind: "ventas", id: retiredSourceId },
-        useTicketData: true,
-        received: "232.00",
-      }),
-      /ya está registrado/,
-    );
-    await assert.rejects(
-      run("movement.review.approve", {
-        id: saved.id,
-        reviewVersion: detail.movement.review_version,
-      }),
-      /valid|revisi|aprobad/i,
-    );
-  });
-  await test("changed, cancelled or already registered source tickets are rejected atomically during review", async () => {
-    const saved = await reviewSale();
-    const sourceId = await ticket();
-    const payload = await validationPayload(saved.id, sourceId);
-    const before = await movementDetail(saved.id);
-    await sourceWriter.query(
-      "UPDATE public.ventas SET cliente=$2::jsonb WHERE id=$1",
-      [sourceId, JSON.stringify({ nombre: "Cliente cambió QA" })],
-    );
-    await assert.rejects(
-      run("movement.review.validate", payload),
-      /cambi|revis/i,
-    );
-    assert.deepEqual(await movementDetail(saved.id), before);
-    const changed = await validationPayload(saved.id, sourceId);
-    assert.notEqual(changed.sourceFingerprint, payload.sourceFingerprint);
-    await sourceWriter.query(
-      "UPDATE public.ventas SET cancelada=true WHERE id=$1",
-      [sourceId],
-    );
-    await assert.rejects(
-      run(
-        "movement.review.validate",
-        await validationPayload(saved.id, sourceId),
-      ),
-      /cancelad/i,
-    );
-    assert.deepEqual(await movementDetail(saved.id), before);
-    const registeredId = await ticket();
-    await run("movement.create", {
-      ...input,
-      source: { kind: "ventas", id: registeredId },
-      useTicketData: true,
-      received: "232.00",
-      commission: null,
-    });
-    await assert.rejects(
-      run(
-        "movement.review.validate",
-        await validationPayload(saved.id, registeredId),
-      ),
-      /ya está registrado/,
-    );
-    assert.deepEqual(await movementDetail(saved.id), before);
-    await run("movement.void", {
-      id: saved.id,
-      reason: "Fin de validaciones atómicas QA",
-    });
-  });
-  await test("a commission above the real ticket total needs an explicit valid correction before validation", async () => {
-    const saved = await reviewSale({
-      items: [
-        {
-          description: "Captura por confirmar QA",
-          quantity: 1,
-          unitPrice: "500.00",
-        },
-      ],
-      received: "500.00",
-      commission: {
-        employeeId: reviewEmployee.id,
-        mode: "fixed",
-        value: "300.00",
-      },
-    });
-    const sourceId = await ticket(),
-      payload = await validationPayload(saved.id, sourceId);
-    const before = await movementDetail(saved.id);
-    for (const extra of [
-      {},
-      { commissionValue: "232.01" },
-      { commissionValue: "0" },
-    ]) {
-      await assert.rejects(
-        run("movement.review.validate", { ...payload, ...extra }),
-        /comisi|importe|mayor|super/i,
-      );
-      assert.deepEqual(await movementDetail(saved.id), before);
+    await assert.rejects(run("commission.pay", { id: legacy.commissionId, date: day }), /folio/i);
+    await assert.rejects(run("commission.batchPay", {
+      employeeId: folioEmployee.id, period: "all", anchor: day, paidOn: day,
+      commissionIds: [legacy.commissionId], expectedTotalCents: 1160,
+    }), /folio|autoriza|revisi/i);
+    for (const folio of [undefined, " ", "MAN-" + randomUUID()]) {
+      await assert.rejects(run("sale.folio.complete", { id: legacy.id, reviewVersion: 1, folio }), /folio|MAN-/i);
+      assert.deepEqual(await movementDetail(legacy.id), detail);
     }
-    await run("movement.review.validate", {
-      ...payload,
-      commissionValue: "23.20",
-    });
-    const detail = await movementDetail(saved.id);
-    assert.equal(detail.movement.total_cents, 23200);
-    assert.equal(detail.movement.commission_cents, 2320);
-    assert.equal(detail.movement.employee_id, reviewEmployee.id);
-    assert.equal(detail.movement.review_status, "validated");
-  });
-  await test("concurrent approval and ticket validation accept only one reviewed version and never pay twice", async () => {
-    const saved = await reviewSale();
-    const sourceId = await ticket(),
-      validation = await validationPayload(saved.id, sourceId);
-    const results = await Promise.allSettled([
-      run("movement.review.approve", {
-        id: saved.id,
-        reviewVersion: validation.reviewVersion,
-      }),
-      run("movement.review.validate", validation),
-    ]);
-    assert.equal(
-      results.filter((result) => result.status === "fulfilled").length,
-      1,
-    );
-    const { movement } = await movementDetail(saved.id);
-    assert.equal(movement.review_version, validation.reviewVersion + 1);
-    assert.ok(["approved", "validated"].includes(movement.review_status));
-    assert.equal(
-      movement.total_cents,
-      movement.review_status === "validated" ? 23200 : 11600,
-    );
-    const payouts = await Promise.allSettled([
-      run("commission.pay", { id: movement.commission_id, date: day }),
-      run("commission.pay", { id: movement.commission_id, date: day }),
-    ]);
-    assert.equal(
-      payouts.filter((result) => result.status === "fulfilled").length,
-      1,
-    );
-    const after = await movementDetail(saved.id);
-    assert.equal(after.movement.commission_paid_on, day);
-    assert.equal(after.payments.length, 1);
-    await assert.rejects(
-      run(
-        "movement.review.validate",
-        await validationPayload(saved.id, sourceId),
-      ),
-      /pagad|historial|valid|revisi/i,
-    );
-    assert.deepEqual(await movementDetail(saved.id), after);
-  });
-  await test("approval invalidates an earlier payout snapshot and a simultaneous payout cannot bypass a frozen sale", async () => {
-    const raceEmployee = await run("employee.save", {
-      name: "Carrera aprobación QA",
-      phone: "",
-      position: "Técnico",
-    });
-    const saved = await reviewSale({
-      commission: { employeeId: raceEmployee.id, value: "11.60" },
-    });
-    const { movement } = await movementDetail(saved.id);
-    const frozen = await payoutPreview(raceEmployee.id, "all", day);
-    assert.equal(frozen.totalCents, 0);
-    const race = await Promise.allSettled([
-      run("movement.review.approve", {
-        id: saved.id,
-        reviewVersion: movement.review_version,
-      }),
-      run("commission.pay", { id: movement.commission_id, date: day }),
-    ]);
-    assert.equal(race[0].status, "fulfilled");
-    const after = await movementDetail(saved.id);
+    await assert.rejects(run("sale.folio.complete", { id: legacy.id, reviewVersion: 2, folio: "PAPEL-" + randomUUID() }), /cambió/);
+    const payload = await completePayload(legacy.id), request = randomUUID();
+    const saved = await run("sale.folio.complete", payload, request);
+    assert.deepEqual(await run("sale.folio.complete", payload, request), saved);
+    const after = await movementDetail(legacy.id);
+    for (const key of ["date", "concept", "contact", "items", "subtotal_cents", "tax_cents", "total_cents", "paid_cents", "commission_cents", "commission_id"])
+      assert.deepEqual(after.movement[key], detail.movement[key]);
+    assert.deepEqual(after.payments, detail.payments);
+    assert.equal(after.movement.manual_folio, payload.folio);
     assert.equal(after.movement.review_status, "approved");
-    if (race[1].status === "fulfilled") {
-      assert.equal(after.movement.commission_paid_on, day);
-      await assert.rejects(
-        run("commission.pay", { id: movement.commission_id, date: day }),
-        /ya está pagada/,
-      );
-    } else {
-      assert.equal(after.movement.commission_paid_on, null);
-      const released = await payoutPreview(raceEmployee.id, "all", day);
-      assert.equal(released.totalCents, 1160);
-      assert.notEqual(released.snapshot, frozen.snapshot);
-      await assert.rejects(
-        run("commission.batchPay", {
-          ...snapshotPayload(frozen),
-          expectedTotalCents: 1160,
-        }),
-        /cambi|revis/i,
-      );
-      await run("commission.batchPay", snapshotPayload(released));
-    }
+    assert.equal(after.movement.review_version, 2);
+    const state = await getState(new URLSearchParams({ from: "2003-01-15", to: "2003-01-15" }));
+    assert.equal(state.summary.income, 11600);
+    assert.equal(state.summary.commissions, 1160);
+    assert.equal(state.summary.profit, 10440);
+    assert.equal(state.summary.pendingIncome, 0);
+    const released = await payoutPreview(folioEmployee.id, "all", day);
+    assert.equal(released.totalCents, 1160);
+    assert.equal(released.frozenCents, 0);
+    const aliases = (await connection.query("SELECT folio FROM administracion.sale_identity_aliases WHERE movement_id=$1", [legacy.id])).rows;
+    assert.deepEqual(aliases, [{ folio: legacy.folio }]);
+    const audit = (await connection.query("SELECT action,details FROM administracion.audit WHERE entity_id=$1 ORDER BY id", [legacy.id])).rows;
+    assert.ok(audit.some((row) => row.action === "legacy.fixture"));
+    const change = audit.find((row) => row.action === "sale.folio.complete.changes");
+    assert.equal(change.details.before.movement.review_status, "pending");
+    assert.equal(change.details.after.movement.review_status, "approved");
+    assert.equal(Number(change.details.before.movement.total_cents), 11600);
+    assert.equal(Number(change.details.after.movement.total_cents), 11600);
+    await run("commission.batchPay", snapshotPayload(released));
+    assert.equal((await getState(new URLSearchParams({ from: "2003-01-15", to: "2003-01-15" }))).summary.profit, 10440);
+    await assert.rejects(run("commission.pay", { id: legacy.commissionId, date: day }), /ya está pagada/);
+    const sourceId = await ticket("negra", { folio: legacy.folio });
+    assert.equal((await lookupSales("LLA1:V:" + sourceId))[0].registeredId, legacy.id);
+    await assert.rejects(run("movement.create", { ...input, ticketCode: "LLA1:V:" + sourceId, commission: null }), /ya está registrado/);
   });
-  await test("reconciling a manual sale against a simultaneous scan preserves one source identity without a database deadlock", async () => {
-    const saved = await reviewSale();
-    const sourceId = await ticket(),
-      payload = await validationPayload(saved.id, sourceId);
+  await test("retired review actions cannot approve or replace an existing sale", async () => {
+    const legacy = await legacySale({ date: "2003-02-15" });
+    const before = await movementDetail(legacy.id);
+    for (const action of ["movement.review.approve", "movement.review.validate"]) {
+      await assert.rejects(run(action, { id: legacy.id, reviewVersion: 1, confirmed: true }), /Acción|acción|desconocida|válida/i);
+      assert.deepEqual(await movementDetail(legacy.id), before);
+    }
+    assert.deepEqual(await lookupSales("LLA1:V:no-existe-" + randomUUID()), []);
+    assert.deepEqual(await movementDetail(legacy.id), before);
+  });
+  await test("folio completion rejects registered and aliased tickets without altering legacy amounts", async () => {
+    const oldCodeId = "retirado-" + randomUUID();
+    const legacy = await legacySale({ ticketCode: "LLA1:V:" + oldCodeId });
+    const registered = compactSale({ commission: null });
+    await run("sale.manual.create", registered);
+    const before = await movementDetail(legacy.id);
+    await assert.rejects(run("sale.folio.complete", await completePayload(legacy.id, " " + registered.folio.toLowerCase() + " ")), /ya está registrado/);
+    assert.deepEqual(await movementDetail(legacy.id), before);
+    const folio = "PAPEL-ALIAS-" + randomUUID();
+    await run("sale.folio.complete", await completePayload(legacy.id, folio));
+    const sourceId = await ticket("blanca", { id: oldCodeId });
+    assert.equal((await lookupSales("LLA1:V:" + sourceId))[0].registeredId, legacy.id);
+    await assert.rejects(run("sale.manual.create", compactSale({ folio: " " + folio.toLowerCase() + " ", commission: null })), /ya está registrado/);
+    await assert.rejects(run("movement.create", { ...input, ticketCode: "LLA1:V:" + sourceId, commission: null }), /ya está registrado/);
+  });
+  await test("concurrent folio completion accepts one version and does not rewrite an already confirmed sale", async () => {
+    const legacy = await legacySale();
+    const payload = await completePayload(legacy.id);
     const results = await Promise.allSettled([
-      run("movement.review.validate", payload),
-      run("movement.create", {
-        ...input,
-        source: { kind: "ventas", id: sourceId },
-        useTicketData: true,
-        received: "232.00",
-        commission: { employeeId: reviewEmployee.id, value: "11.60" },
-      }),
+      run("sale.folio.complete", payload),
+      run("sale.folio.complete", { ...payload, folio: "PAPEL-OTRO-" + randomUUID() }),
     ]);
-    assert.equal(
-      results.filter((result) => result.status === "fulfilled").length,
-      1,
-    );
-    for (const result of results) {
-      if (result.status === "rejected") {
-        assert.notEqual(result.reason.code, "40P01");
-        assert.match(result.reason.message, /registrad|cambi/i);
-      }
-    }
-    const canonical = await connection.query(
-      "SELECT id FROM administracion.movements WHERE source_kind='ventas' AND source_id=$1",
-      [sourceId],
-    );
-    assert.equal(canonical.rows.length, 1);
-    const detail = await movementDetail(canonical.rows[0].id);
-    assert.equal(detail.movement.review_status, "validated");
-    assert.equal(detail.movement.commission_cents, 1160);
-    assert.equal(detail.movement.commission_paid_on, null);
-    if (canonical.rows[0].id !== saved.id)
-      assert.equal(
-        (await movementDetail(saved.id)).movement.review_status,
-        "pending",
-      );
+    assert.equal(results.filter((row) => row.status === "fulfilled").length, 1);
+    assert.equal((await movementDetail(legacy.id)).movement.review_version, 2);
+    const before = await movementDetail(legacy.id);
+    await assert.rejects(run("sale.folio.complete", await completePayload(legacy.id)), /folio confirmado/);
+    assert.deepEqual(await movementDetail(legacy.id), before);
   });
-  await test("review migration replay preserves approved historical payouts and never reopens a paid commission", async () => {
-    const saved = await reviewSale();
-    const { movement } = await movementDetail(saved.id);
-    // This clone-only fixture represents a manual commission paid before review existed.
-    await connection.query(
-      "UPDATE administracion.commissions SET paid_on=$2 WHERE id=$1",
-      [movement.commission_id, day],
-    );
+  await test("folio completion racing a scanned registration cannot reserve the same ticket twice or deadlock", async () => {
+    const legacy = await legacySale();
     const sourceId = await ticket();
-    await assert.rejects(
-      run(
-        "movement.review.validate",
-        await validationPayload(saved.id, sourceId),
-      ),
-      /pagad|historial/i,
+    const [sourceSale] = await lookupSales("LLA1:V:" + sourceId);
+    const results = await Promise.allSettled([
+      run("sale.folio.complete", await completePayload(legacy.id, sourceSale.folio)),
+      run("movement.create", { ...input, ticketCode: "LLA1:V:" + sourceId, commission: null }),
+    ]);
+    assert.equal(results.filter((row) => row.status === "fulfilled").length, 1);
+    for (const row of results.filter((row) => row.status === "rejected")) {
+      assert.notEqual(row.reason.code, "40P01");
+      assert.match(row.reason.message, /ya está registrado/);
+    }
+    assert.ok((await lookupSales("LLA1:V:" + sourceId))[0].registeredId);
+    const registered = await connection.query(
+      "SELECT id FROM administracion.movements WHERE source_id=$1 OR lower(btrim(manual_folio))=lower(btrim($2))", [sourceId, sourceSale.folio],
     );
-    await approve(saved.id);
-    const before = await movementDetail(saved.id);
-    assert.equal(before.movement.review_status, "approved");
-    assert.equal(before.movement.commission_paid_on, day);
-    await migrator.query(
-      await fs.readFile(
-        new URL("../database/007-sale-review.sql", import.meta.url),
-        "utf8",
-      ),
-    );
-    await migrator.query(
-      `GRANT SELECT ON administracion.manual_ledger TO "${writerRole}"`,
-    );
-    assert.deepEqual(await movementDetail(saved.id), before);
-    await assert.rejects(
-      run("commission.pay", { id: movement.commission_id, date: day }),
-      /ya está pagada/,
-    );
+    assert.equal(registered.rows.length, 1);
+  });
+  await test("legacy paid commissions and migration replay preserve history and cannot be reopened", async () => {
+    const legacy = await legacySale();
+    await connection.query("UPDATE administracion.commissions SET paid_on=$2 WHERE id=$1", [legacy.commissionId, day]);
+    const before = await movementDetail(legacy.id);
+    await assert.rejects(run("sale.folio.complete", await completePayload(legacy.id)), /pagada|históricos/);
+    assert.deepEqual(await movementDetail(legacy.id), before);
+    await migrator.query(await fs.readFile(new URL("../database/007-sale-review.sql", import.meta.url), "utf8"));
+    await migrator.query(`GRANT SELECT ON administracion.manual_ledger TO "${writerRole}"`);
+    assert.deepEqual(await movementDetail(legacy.id), before);
+    assert.equal((await movementDetail(legacy.id)).movement.commission_paid_on, day);
+    await assert.rejects(run("commission.pay", { id: legacy.commissionId, date: day }));
   });
   if (process.argv.includes("--keep")) {
     await fs.mkdir(new URL("../.local/", import.meta.url), { recursive: true });

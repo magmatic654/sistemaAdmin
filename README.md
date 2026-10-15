@@ -10,7 +10,6 @@ Consulta la base de `sistemaBodega` y `llaneteramulti` con una conexión de sól
 - **Ganancia:** ventas confirmadas menos gastos y comisiones del periodo.
 - **Pagos pendientes:** deudas de todas las fechas, agrupadas por empleado o proveedor.
 - **Historial:** ventas, gastos y comisiones del periodo elegido.
-- **Ventas por revisar:** capturas manuales pendientes de todas las fechas.
 - **Empleados:** agregar, editar, eliminar/restaurar y consultar comisiones por
   día, semana, mes o rango personalizado. Liquidar un periodo o todas las pendientes
   del empleado, sin límite de mes.
@@ -22,7 +21,7 @@ conservan sus propios periodos.
 Los pagos se agrupan por empleado y las confirmaciones permanecen hasta cerrarlas.
 Todos los apartados se abren en un clic desde la barra lateral o la cuadrícula móvil.
 Cada uno conserva su dirección al recargar y admite Atrás/Adelante. Los enlaces
-antiguos a `?seccion=resumen` abren Ganancia.
+antiguos a `?seccion=resumen` abren Ganancia y `?seccion=revision` abre Historial.
 
 Fondo blanco, texto grande y controles accesibles. Los proveedores se recuerdan
 al confirmar una salida y completan el concepto y el pago de capturas futuras.
@@ -31,48 +30,32 @@ al confirmar una salida y completan el concepto y el pago de capturas futuras.
 
 Las ventas de los otros sistemas nunca se cargan ni suman automáticamente.
 Escanear sólo prerrellena el formulario; el administrador debe guardar para
-registrar. **Nueva venta** abre un formulario manual con producto/servicio,
-cantidad, precio, forma de pago, cliente y comisión opcional (empleado e importe).
-El servidor genera folio interno y fecha comercial; confirma el cobro completo.
-Todos los campos y botones caben sin scroll en móvil y escritorio. Funciona aunque
-la venta no exista en los otros sistemas; requiere que la base de Administración
-esté disponible. **Escanear ticket** busca el documento existente y recupera
-fecha, folio, cliente, teléfono, partidas,
-subtotal, IVA, total y forma de pago. Sólo la confirmación crea el registro.
-El detalle conserva los artículos, cantidades, precios unitarios, importes por
-partida, subtotal, IVA y total; no cambia los importes del ticket de origen.
+registrar. **Nueva venta** abre un formulario manual con folio obligatorio,
+producto/servicio, cantidad, precio, forma de pago, cliente y comisión opcional
+(empleado e importe). Guardar confirma el cobro completo y la venta; la comisión
+queda disponible para liquidar sin otra aprobación. El servidor asigna la fecha
+comercial actual. Todos los campos y botones caben sin scroll en móvil y escritorio.
+Funciona aunque la venta no exista en los otros sistemas; sólo necesita la base
+propia de Administración. **Escanear ticket** busca el documento existente y recupera
+fecha, folio, cliente, teléfono, partidas, subtotal, IVA, total y forma de pago.
+Sólo la confirmación crea el registro. El detalle conserva los artículos,
+cantidades, precios unitarios, importes por partida, subtotal, IVA y total.
 
 El servidor resuelve la identidad canónica y PostgreSQL exige UNIQUE(tabla, id).
-La captura compacta genera `MAN-<UUID de la solicitud>` y conserva ese identificador
-en reintentos simultáneos o posteriores; no pide el ID de otro sistema. Una venta
-manual independiente no se vincula por coincidencias de cliente, producto o precio
-con una venta externa: esos datos pueden coincidir en ventas legítimas distintas.
-Los registros manuales anteriores que conservaron folio/origen e ID mantienen
-sus comprobaciones frente a un escaneo posterior. Bloqueos transaccionales e
-índices impiden repetir esos identificadores, incluso en guardados simultáneos.
-Anular conserva los identificadores ocupados y el historial.
+Los folios manuales se comparan sin distinguir mayúsculas ni espacios exteriores,
+incluso frente a registros escaneados. Se reserva el folio bajo un bloqueo
+transaccional antes de guardar; si se proporciona un código, también se reserva
+su tabla e ID. Los reintentos de una misma solicitud devuelven el resultado previo.
+Un folio no puede ser una referencia interna antigua `MAN-<UUID>`.
+Anular conserva ocupados los identificadores y su historial.
 
-Las ventas manuales aparecen como **Requiere revisión**. `MAN-…` es una referencia
-interna, no un folio validado. La pestaña **Revisión** reúne las pendientes de
-cualquier fecha. La venta y su comisión quedan fuera de las ventas confirmadas
-y de la ganancia hasta aprobar o validar. El importe por revisar aparece separado
-para el periodo elegido; la cola mantiene todas las fechas. La comisión queda
-congelada y fuera de cualquier liquidación.
-El administrador puede aprobar la captura manual o buscar un folio/código y
-confirmar **Validar y actualizar** después de revisar el ticket real. Sin
-coincidencias no cambia el registro ni se libera la comisión.
-La revisión muestra desde el inicio artículos, cantidades, precios, subtotal,
-IVA, total, cliente, fecha, forma de pago y comisión. Los códigos y referencias
-quedan disponibles dentro de «Datos del registro».
-
-La validación actualiza únicamente el registro propio con fecha, cliente, forma
-de pago, artículos, subtotal, IVA y total del ticket; conserva un cobro completo.
-No crea otra venta ni modifica el documento externo. Mantiene el empleado y el
-importe de comisión; si supera el nuevo total, exige ajustar el importe antes de
-confirmar. Conserva auditoría de los valores anteriores y sus identificadores
-para impedir duplicados posteriores. Un ticket modificado desde la revisión,
-cancelado o ya usado por otra venta se rechaza. Una comisión pagada no se reabre
-ni permite reescribir la venta mediante validación.
+No hay apartado ni acciones de revisión. Las capturas antiguas que estaban pendientes
+sin folio permanecen en **Historial** como **Sin folio**. Su detalle permite
+**Completar folio** sin cambiar importes, artículos, fecha o pagos. Al guardarlo,
+entran en los totales de su fecha original y su comisión puede liquidarse.
+Mientras falte, ambos quedan fuera de los totales y del pago. Los registros que
+ya estaban confirmados o pagados conservan su estado. Completar el folio mantiene
+la referencia anterior como alias contra duplicados y guarda auditoría.
 
 El código impreso incluye versión, tabla e ID:
 
@@ -88,7 +71,7 @@ y nunca se confirma una venta mediante el fin del escaneo. Los tickets anteriore
 pueden buscarse por folio o ID; si el folio es ambiguo, se debe usar la identidad
 completa.
 
-Las consultas externas se limitan a la búsqueda y validación explícita del ticket.
+Las consultas externas se limitan a la búsqueda explícita del ticket.
 No se modifica stock, documentos de venta, folios, IVA histórico ni archivos
 originales. Las cancelaciones de otra app no reescriben el resumen: se revisan y
 anulan manualmente aquí. Nuevos abonos sobre un ticket cancelado se rechazan.
@@ -142,14 +125,13 @@ Las variables privadas, respaldos y datos de QA quedan fuera de Git.
 ## Cifras y persistencia
 
 Ganancia = ventas confirmadas − salidas − comisiones de ventas confirmadas en el período.
-La tarjeta Total de ventas usa sólo entradas aprobadas o validadas del mismo periodo.
-Las ventas por revisar y sus comisiones se muestran aparte; al aprobarlas entran
-en la fecha original, y al validarlas se utiliza la fecha y los importes del ticket.
+La tarjeta Total de ventas incluye las entradas confirmadas del mismo periodo.
+Las capturas históricas incompletas permanecen fuera hasta completar su folio.
 Los gastos y las comisiones de ventas confirmadas se descuentan aunque estén pendientes de pago;
 liquidarlos después no vuelve a descontarlos. Las anulaciones quedan fuera.
 Las ventas se registran con cobro completo al momento; no hay ventas a crédito
 ni abonos de clientes. Los saldos pendientes de proveedores abarcan todas las fechas.
-Las comisiones por pagar sólo incluyen las liberadas; las congeladas se separan.
+Las comisiones por pagar incluyen las ventas confirmadas; los legados sin folio no son pagables.
 Los pagos parciales de salidas se ligan al gasto original y no crean otra compra.
 Los importes usan centavos.
 Las fechas comerciales corresponden a Ciudad de México; las semanas comienzan
@@ -160,7 +142,7 @@ antes de confirmar la venta. El dueño captura el importe manualmente: debe ser
 mayor a cero y no superar el total de la venta. No hay porcentajes sugeridos ni
 preferencias guardables.
 Dar de baja al empleado conserva su historial y permite pagar deudas anteriores.
-La liquidación agrupa únicamente las comisiones pendientes revisadas por empleado
+La liquidación agrupa únicamente las comisiones pendientes por empleado
 y periodo, o todas las pendientes de cualquier fecha. Guarda un comprobante
 interno y se confirma de forma atómica: si otro pago se adelanta, se rechaza el
 grupo y se pide actualizar. Un trigger

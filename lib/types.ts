@@ -121,8 +121,6 @@ export type AdminState = {
   total: number;
   page: number;
   pageSize: number;
-  reviewCount: number;
-  reviewTotal: number;
   range: { from: string; to: string };
 };
 export type PayoutPreview = {
