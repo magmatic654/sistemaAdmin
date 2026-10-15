@@ -507,11 +507,12 @@ export function MovementForm({
     void submit("movement.create", {
       kind,
       date: recordDate,
-      paymentDate: partial
-        ? paymentDate < recordDate
-          ? recordDate
-          : paymentDate
-        : recordDate,
+      paymentDate:
+        kind === "salida" && partial
+          ? paymentDate < recordDate
+            ? recordDate
+            : paymentDate
+          : recordDate,
       contact,
       phone: source?.phone || f.get("phone") || "",
       manual: kind === "entrada" && !source,
@@ -528,7 +529,8 @@ export function MovementForm({
       supplierId: supplierId || undefined,
       reference: f.get("reference"),
       notes: f.get("notes"),
-      received: partial ? received : (total / 100).toFixed(2),
+      received:
+        kind === "salida" && partial ? received : (total / 100).toFixed(2),
       commission,
       source: source ? { kind: source.kind, id: source.id } : undefined,
     });
@@ -814,35 +816,37 @@ export function MovementForm({
               <input name="phone" maxLength={40} />
             </label>
           )}
-          <div className="payment-box">
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={partial}
-                onChange={(event) => setPartial(event.target.checked)}
-              />
-              Pago parcial o pendiente
-            </label>
-            {partial && (
-              <div className="form-grid">
-                <label>
-                  {kind === "entrada" ? "Cobrado ($)" : "Pagado ($)"}
-                  <input
-                    value={received}
-                    onChange={(event) => setReceived(event.target.value)}
-                    inputMode="decimal"
-                    placeholder="0.00"
-                    required
-                  />
-                </label>
-                <DatePicker
-                  label="Fecha del pago"
-                  value={paymentDate}
-                  onChange={setPaymentDate}
+          {kind === "salida" && (
+            <div className="payment-box">
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={partial}
+                  onChange={(event) => setPartial(event.target.checked)}
                 />
-              </div>
-            )}
-          </div>
+                Pago parcial o pendiente
+              </label>
+              {partial && (
+                <div className="form-grid">
+                  <label>
+                    Pagado ($)
+                    <input
+                      value={received}
+                      onChange={(event) => setReceived(event.target.value)}
+                      inputMode="decimal"
+                      placeholder="0.00"
+                      required
+                    />
+                  </label>
+                  <DatePicker
+                    label="Fecha del pago"
+                    value={paymentDate}
+                    onChange={setPaymentDate}
+                  />
+                </div>
+              )}
+            </div>
+          )}
           {kind === "entrada" && (
             <CommissionFields
               employees={employees}
@@ -1154,6 +1158,16 @@ export function PaymentForm({
   const [date, setDate] = useState(businessToday()),
     [method, setMethod] = useState(movement.method);
   const { busy, error, submit } = useSubmit(write, onDone);
+  if (movement.kind === "entrada") {
+    return (
+      <div className="modal-body form-stack">
+        <p>Las ventas se registran pagadas por completo.</p>
+        <button className="button secondary" onClick={onClose}>
+          Cerrar
+        </button>
+      </div>
+    );
+  }
   return (
     <form
       onSubmit={(event) => {
@@ -1501,11 +1515,17 @@ export function DetailView({
           <dd>{movement.reference || "Sin referencia"}</dd>
         </div>
         <div>
-          <dt>Saldo pendiente</dt>
+          <dt>
+            {movement.kind === "entrada" ? "Total cobrado" : "Saldo pendiente"}
+          </dt>
           <dd className="number">
             {inactive
               ? "No aplica"
-              : money(movement.total_cents - movement.paid_cents)}
+              : money(
+                  movement.kind === "entrada"
+                    ? movement.paid_cents
+                    : movement.total_cents - movement.paid_cents,
+                )}
           </dd>
         </div>
         {movement.source_id && (
@@ -1565,7 +1585,7 @@ export function DetailView({
             ))}
           </div>
         ) : (
-          <p className="hint">Aún no hay abonos registrados.</p>
+          <p className="hint">Aún no hay pagos registrados.</p>
         )}
       </div>
       {movement.notes && (
@@ -1576,13 +1596,12 @@ export function DetailView({
       )}
       {!inactive && (
         <div className="detail-actions">
-          {movement.paid_cents < movement.total_cents && (
-            <button className="button primary" onClick={onPayment}>
-              {movement.kind === "entrada"
-                ? "Registrar cobro"
-                : "Registrar pago"}
-            </button>
-          )}
+          {movement.kind === "salida" &&
+            movement.paid_cents < movement.total_cents && (
+              <button className="button primary" onClick={onPayment}>
+                Registrar pago
+              </button>
+            )}
           <button className="text-button danger" onClick={onVoid}>
             Anular registro
           </button>

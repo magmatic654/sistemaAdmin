@@ -27,8 +27,9 @@ muestran el intervalo con flechas para navegar; sólo el personalizado despliega
 Desde/Hasta. Liquidar comisiones abre Todas las pendientes, con todas las fechas,
 y permite acotar el periodo antes de confirmar. Las pagadas quedan fuera del pago.
 
-Ventas a crédito identifica las ventas con saldo de cliente; una línea aclara su
-significado dentro de ese apartado. El detalle de cada venta muestra artículos,
+Las ventas se registran con cobro completo, sin apartado de crédito ni abonos de
+clientes. Los pagos parciales y saldos pendientes sólo corresponden a proveedores.
+El detalle de cada venta muestra artículos,
 cantidad, precio unitario, importe por partida, subtotal, IVA y total en fichas
 que se adaptan al ancho de escritorio y móvil.
 

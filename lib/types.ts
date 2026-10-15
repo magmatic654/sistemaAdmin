@@ -81,7 +81,6 @@ export type Summary = {
   collected: number;
   paid: number;
   commissionPaid: number;
-  receivable: number;
   payable: number;
   employeePayable: number;
   profit: number;

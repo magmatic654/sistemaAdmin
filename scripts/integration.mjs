@@ -236,7 +236,7 @@ try {
     items: [{ description: "Servicio QA", quantity: 1, unitPrice: "116.00" }],
     vatIncluded: true,
     method: "efectivo",
-    received: "16.00",
+    received: "116.00",
     notes: "",
     reference: "",
     commission: { employeeId: employee.id, mode: "fixed", value: "11.60" },
@@ -258,6 +258,7 @@ try {
     assert.equal(detail.payments.length, 1);
     assert.equal(detail.movement.total_cents, 11600);
     assert.equal(detail.movement.subtotal_cents, 10000);
+    assert.equal(detail.movement.paid_cents, 11600);
     assert.equal(detail.movement.commission_cents, 1160);
     await assert.rejects(
       run("movement.create", { ...input, ticketCode: manualId }),
@@ -268,17 +269,74 @@ try {
       /ID de venta/,
     );
   });
-  await test("two concurrent payments cannot overcollect the outstanding balance", async () => {
-    const results = await Promise.allSettled([
+  await test("sales require full settlement and never accept later customer installments", async () => {
+    const sourceId = await ticket(),
+      payload = {
+        ...input,
+        ticketCode: "LLA1:V:" + sourceId,
+        useTicketData: true,
+        commission: null,
+      };
+    const before = (
+      await connection.query("SELECT count(*) FROM administracion.movements")
+    ).rows[0].count;
+    for (const received of ["0", "16.00", "232.01"])
+      await assert.rejects(
+        run("movement.create", { ...payload, received }),
+        /cobro completo/,
+      );
+    assert.equal(
+      (await connection.query("SELECT count(*) FROM administracion.movements"))
+        .rows[0].count,
+      before,
+    );
+    await assert.rejects(
       run("payment.create", {
         movementId: income.id,
+        date: day,
+        method: "efectivo",
+        amount: "1.00",
+        reference: "",
+      }),
+      /no admiten abonos posteriores/,
+    );
+    assert.equal((await movementDetail(income.id)).payments.length, 1);
+    await assert.rejects(
+      getState(new URLSearchParams({ from: day, to: day, view: "cobros" })),
+      /cobro completo/,
+    );
+    assert.equal("receivable" in (await getState(params)).summary, false);
+    const { received: _received, ...withoutReceived } = payload;
+    const saved = await run("movement.create", withoutReceived);
+    const detail = await movementDetail(saved.id);
+    assert.equal(detail.movement.paid_cents, detail.movement.total_cents);
+    assert.equal(detail.payments.length, 1);
+    await run("movement.void", {
+      id: saved.id,
+      reason: "Fin de prueba de cobro completo",
+    });
+  });
+  await test("two concurrent supplier payments cannot overpay the outstanding balance", async () => {
+    const payableExpense = await run("movement.create", {
+      ...input,
+      kind: "salida",
+      supplierId: supplier.id,
+      concept: "Compra concurrente QA",
+      category: "Compra de productos",
+      commission: null,
+      received: "0",
+      items: [{ description: "Compra QA", quantity: 1, unitPrice: "100.00" }],
+    });
+    const results = await Promise.allSettled([
+      run("payment.create", {
+        movementId: payableExpense.id,
         date: day,
         method: "tarjeta",
         amount: "60.00",
         reference: "",
       }),
       run("payment.create", {
-        movementId: income.id,
+        movementId: payableExpense.id,
         date: day,
         method: "transferencia",
         amount: "60.00",
@@ -286,7 +344,14 @@ try {
       }),
     ]);
     assert.equal(results.filter((r) => r.status === "fulfilled").length, 1);
-    assert.equal((await movementDetail(income.id)).movement.paid_cents, 7600);
+    assert.equal(
+      (await movementDetail(payableExpense.id)).movement.paid_cents,
+      6000,
+    );
+    await run("movement.void", {
+      id: payableExpense.id,
+      reason: "Fin de prueba de pagos concurrentes",
+    });
   });
   await test("one employee per income and no commission on an expense", async () => {
     await assert.rejects(
@@ -337,15 +402,14 @@ try {
     assert.equal(state.summary.expenses, 5000);
     assert.equal(state.summary.commissions, 1160);
     assert.equal(state.summary.profit, 5440);
-    assert.equal(state.summary.collected, 7600);
+    assert.equal(state.summary.collected, 11600);
     assert.equal(state.summary.paid, 5000);
-    assert.equal(state.summary.receivable, 4000);
     assert.equal(state.summary.payable, 0);
     assert.equal(state.summary.employeePayable, 1160);
     const commission = (await movementDetail(income.id)).movement.commission_id;
     await run("commission.pay", { id: commission, date: day });
     state = await getState(params);
-    assert.equal(state.summary.cash, 1440);
+    assert.equal(state.summary.cash, 5440);
     assert.equal(state.summary.profit, 5440);
     assert.equal(state.summary.employeePayable, 0);
     await assert.rejects(
@@ -387,7 +451,7 @@ try {
       ...input,
       source: { kind: "ventas", id: fixtureId },
       useTicketData: true,
-      received: "0",
+      received: "232.00",
       total: "0.01",
       items: [],
     });
@@ -480,7 +544,7 @@ try {
       ...input,
       commission: null,
       ticketCode: "LLA1:V:" + id,
-      received: "0",
+      received: "116.00",
     };
     const results = await Promise.allSettled([
       run("movement.create", payload),

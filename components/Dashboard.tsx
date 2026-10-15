@@ -39,7 +39,7 @@ import {
 } from "./forms";
 
 type Section = "registro" | "resumen" | "empleados";
-type Panel = "ventas" | "salidas" | "cobros" | "proveedores" | "comisiones";
+type Panel = "ventas" | "salidas" | "proveedores" | "comisiones";
 type Dialog = {
   type:
     | "entrada"
@@ -64,7 +64,6 @@ const sections = [
 const panels = [
   { id: "ventas" as const, label: "Ventas" },
   { id: "salidas" as const, label: "Salidas" },
-  { id: "cobros" as const, label: "Ventas a crédito" },
   { id: "proveedores" as const, label: "Proveedores" },
   { id: "comisiones" as const, label: "Comisiones" },
 ];
@@ -133,9 +132,7 @@ export default function Dashboard({ today }: { today: string }) {
           ? "salidas"
           : panel === "comisiones"
             ? "comisiones-pendientes"
-            : panel === "proveedores"
-              ? "proveedores"
-              : "cobros";
+            : "proveedores";
   useEffect(() => {
     const value = new URL(window.location.href).searchParams.get("seccion");
     if (value === "resumen" || value === "empleados") setSection(value);
@@ -247,9 +244,7 @@ export default function Dashboard({ today }: { today: string }) {
           <table
             className={
               "responsive-table movement-table" +
-              (panel === "cobros" || panel === "proveedores"
-                ? " balance-table"
-                : "")
+              (panel === "proveedores" ? " balance-table" : "")
             }
             role="table"
           >
@@ -265,9 +260,7 @@ export default function Dashboard({ today }: { today: string }) {
                   Estado
                 </th>
                 <th scope="col" role="columnheader" className="align-right">
-                  {panel === "cobros" || panel === "proveedores"
-                    ? "Pendiente"
-                    : "Importe"}
+                  {panel === "proveedores" ? "Pendiente" : "Importe"}
                 </th>
                 <th scope="col" role="columnheader" aria-label="Acciones" />
               </tr>
@@ -301,16 +294,14 @@ export default function Dashboard({ today }: { today: string }) {
                   <td
                     role="cell"
                     data-label={
-                      panel === "cobros" || panel === "proveedores"
-                        ? "Pendiente"
-                        : "Importe"
+                      panel === "proveedores" ? "Pendiente" : "Importe"
                     }
                     className={
                       "number align-right " + (m.voided_at ? "muted" : "")
                     }
                   >
                     {money(
-                      panel === "cobros" || panel === "proveedores"
+                      panel === "proveedores"
                         ? m.total_cents - m.paid_cents
                         : m.total_cents,
                     )}
@@ -321,14 +312,14 @@ export default function Dashboard({ today }: { today: string }) {
                     aria-label="Acciones"
                     className="align-right mobile-wide"
                   >
-                    {panel === "cobros" || panel === "proveedores" ? (
+                    {panel === "proveedores" ? (
                       <button
                         className="button secondary small"
                         onClick={() =>
                           setDialog({ type: "payment", movement: m })
                         }
                       >
-                        {m.kind === "entrada" ? "Cobrar" : "Pagar"}
+                        Pagar
                       </button>
                     ) : (
                       <button
@@ -674,18 +665,7 @@ export default function Dashboard({ today }: { today: string }) {
                         </button>
                       ))}
                     </div>
-                    {panel === "cobros" && (
-                      <strong className="number">
-                        {money(summary!.receivable)}
-                      </strong>
-                    )}
                   </div>
-                  {panel === "cobros" && (
-                    <p className="credit-panel-note">
-                      Saldo pendiente de las ventas registradas con pago parcial
-                      o a crédito.
-                    </p>
-                  )}
                   {panel === "comisiones" ? commissionTable() : movementTable()}
                 </>
               )}

@@ -2484,11 +2484,6 @@ th {
   color: var(--secondary);
   font-size: 16px;
 }
-.credit-panel-note {
-  color: var(--secondary);
-  font-size: 16px;
-  margin: -4px 0 18px;
-}
 
 /* Keep financial records readable within the available width, without X scrolling. */
 .application,

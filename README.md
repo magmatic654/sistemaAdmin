@@ -7,7 +7,7 @@ Consulta la base de `sistemaBodega` y `llaneteramulti` con una conexión de sól
 ## Secciones
 
 - **Registro:** nueva venta, nueva salida y lectura de tickets.
-- **Resumen:** ganancias, ventas a crédito, historial de ventas/salidas y pagos pendientes
+- **Resumen:** ganancias, cobrado, historial de ventas/salidas y pagos pendientes
   a proveedores y empleados.
 - **Empleados:** agregar, editar, eliminar/restaurar y consultar comisiones por
   día, semana, mes o rango personalizado. Liquidar un periodo o todas las pendientes
@@ -112,10 +112,10 @@ Las variables privadas, respaldos y datos de QA quedan fuera de Git.
 ## Cifras y persistencia
 
 Ganancia = entradas − salidas − comisiones generadas en el período.
-Los saldos pendientes abarcan todas las fechas. **Ventas a crédito** muestra el
-dinero que falta cobrar de ventas registradas con pago parcial o pendiente.
-Los pagos parciales se ligan al registro original y no crean otra compra, gasto
-o venta. Los importes usan centavos.
+Las ventas se registran con cobro completo al momento; no hay ventas a crédito
+ni abonos de clientes. Los saldos pendientes de proveedores abarcan todas las fechas.
+Los pagos parciales de salidas se ligan al gasto original y no crean otra compra.
+Los importes usan centavos.
 Las fechas comerciales corresponden a Ciudad de México; las semanas comienzan
 el lunes. No se inventan costos de inventario ni se calcula utilidad fiscal.
 

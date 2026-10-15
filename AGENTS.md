@@ -23,7 +23,9 @@
   de cualquier fecha. Una comisión pagada no se reabre ni se cobra otra vez.
 - Mostrar las partidas de cada venta con cantidad, precio unitario, importe,
   subtotal, IVA y total. Conservar los importes históricos del ticket.
-- Llamar Ventas a crédito al saldo pendiente de cobro de ventas parciales o a crédito.
+- Las ventas se registran con cobro completo al momento. No implementar ventas
+  a crédito, saldos de clientes ni abonos a entradas. Los pagos parciales y pendientes
+  corresponden exclusivamente a salidas/proveedores.
 - Guardar todos los registros propios en una base independiente de Administración.
   La conexión compartida sólo tiene SELECT y se consulta al buscar o validar un ticket
   explícitamente; nunca escribir, migrar ni eliminar datos desde esa conexión.

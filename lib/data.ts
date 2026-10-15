@@ -148,6 +148,8 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     );
   const search = (params.get("q") || "").trim().slice(0, 160);
   const view = params.get("view") || "resumen";
+  if (view === "cobros")
+    throw new ValidationError("Las ventas se registran con cobro completo.");
   const page = Math.max(1, Math.min(100000, Number(params.get("page")) || 1));
   if (!Number.isInteger(page)) throw new ValidationError("Página inválida.");
   const pageSize = 25;
@@ -155,8 +157,9 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
   let condition = "l.date BETWEEN $1::date AND $2::date";
   if (view === "entradas") condition += " AND l.kind='entrada'";
   if (view === "salidas") condition += " AND l.kind='salida'";
-  if (view === "cobros" || view === "proveedores") {
-    condition = `l.kind='${view === "cobros" ? "entrada" : "salida"}' AND l.total_cents>l.paid_cents AND NOT l.source_cancelled AND l.voided_at IS NULL AND $1::date<=$2::date`;
+  if (view === "proveedores") {
+    condition =
+      "l.kind='salida' AND l.total_cents>l.paid_cents AND NOT l.source_cancelled AND l.voided_at IS NULL AND $1::date<=$2::date";
   }
   if (search) {
     values.push("%" + search.replace(/[\\%_]/g, "\\$&") + "%");
@@ -191,8 +194,7 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
       WHERE p.date BETWEEN $1::date AND $2::date AND m.voided_at IS NULL`,
       [from, to],
     ),
-    query(`SELECT COALESCE(sum(total_cents-paid_cents) FILTER(WHERE kind='entrada'),0) AS receivable,
-      COALESCE(sum(total_cents-paid_cents) FILTER(WHERE kind='salida'),0) AS payable,
+    query(`SELECT COALESCE(sum(total_cents-paid_cents) FILTER(WHERE kind='salida'),0) AS payable,
       COALESCE(sum(commission_cents) FILTER(WHERE commission_paid_on IS NULL),0) AS employee_payable
       FROM administracion.manual_ledger WHERE voided_at IS NULL AND NOT source_cancelled`),
     query(
@@ -229,7 +231,6 @@ export async function getState(params: URLSearchParams): Promise<AdminState> {
     collected: Number(c.collected),
     paid: Number(c.paid),
     commissionPaid: Number(c.commission_paid),
-    receivable: Number(p.receivable),
     payable: Number(p.payable),
     employeePayable: Number(p.employee_payable),
     profit: 0,
@@ -332,8 +333,13 @@ async function addPayment(
   client: PoolClient,
   movementId: string,
   raw: RecordInput,
+  initialSalePayment = false,
 ) {
   const movement = await lockMovement(client, movementId);
+  if (movement.kind === "entrada" && !initialSalePayment)
+    throw new ValidationError(
+      "Las ventas se registran con cobro completo; no admiten abonos posteriores.",
+    );
   const amount = cents(raw.amount),
     paidDate = date(raw.date);
   if (paidDate < movement.date)
@@ -342,6 +348,12 @@ async function addPayment(
     "SELECT COALESCE(sum(amount_cents),0) AS amount FROM administracion.payments WHERE movement_id=$1",
     [movementId],
   );
+  if (
+    movement.kind === "entrada" &&
+    (amount !== Number(movement.total_cents) ||
+      Number(previous.rows[0].amount) !== 0)
+  )
+    throw new ValidationError("Las ventas se registran con cobro completo.");
   if (amount + Number(previous.rows[0].amount) > Number(movement.total_cents))
     throw new ValidationError("El abono supera el saldo pendiente.");
   const id = randomUUID();
@@ -531,7 +543,12 @@ async function createMovement(client: PoolClient, input: RecordInput) {
   const category = source
     ? "Venta con ticket"
     : text(input.category, "Categoría", 80);
-  const received = cents(input.received, "Importe pagado", true);
+  const received =
+    kind === "entrada" && input.received === undefined
+      ? total
+      : cents(input.received, "Importe pagado", true);
+  if (kind === "entrada" && received !== total)
+    throw new ValidationError("Las ventas se registran con cobro completo.");
   if (received > total)
     throw new ValidationError("El pago inicial no puede superar el total.");
   await client.query(
@@ -573,12 +590,18 @@ async function createMovement(client: PoolClient, input: RecordInput) {
     await addCommission(client, id, total, input.commission);
   }
   if (received > 0)
-    await addPayment(client, id, {
-      amount: (received / 100).toFixed(2),
-      date: input.paymentDate || movementDate,
-      method: paymentMethod,
-      reference: input.reference,
-    });
+    await addPayment(
+      client,
+      id,
+      {
+        amount: (received / 100).toFixed(2),
+        date:
+          kind === "entrada" ? movementDate : input.paymentDate || movementDate,
+        method: paymentMethod,
+        reference: input.reference,
+      },
+      kind === "entrada",
+    );
   return { id };
 }
 
