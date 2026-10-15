@@ -2813,7 +2813,6 @@ th {
 }
 .profit-grid .summary-card {
   --summary-accent: var(--ink);
-  --summary-wash: var(--rule-soft);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -2832,23 +2831,10 @@ th {
   min-height: 44px;
 }
 .summary-term-heading > span:last-child {
-  color: var(--secondary);
+  color: var(--summary-accent);
   font-size: 16px;
   font-weight: 600;
   line-height: 1.35;
-}
-.calculation-mark {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: var(--summary-wash);
-  color: var(--secondary);
-  font-size: 23px;
-  font-weight: 600;
-  line-height: 1;
 }
 .profit-grid .summary-card strong {
   margin: 0;
@@ -2881,7 +2867,7 @@ th {
   gap: 20px;
 }
 .profit-grid .gain .summary-term-heading > span:last-child {
-  color: var(--ink);
+  color: var(--summary-accent);
   font-size: 28px;
   font-weight: 700;
 }
@@ -2892,7 +2878,14 @@ th {
 .profit-grid .gain.is-loss {
   --summary-accent: var(--red);
 }
-.profit-grid .gain.is-zero {
+.profit-grid .collected {
+  --summary-accent: var(--green);
+}
+.profit-grid .expense-total,
+.profit-grid .commission-total {
+  --summary-accent: var(--red);
+}
+.profit-grid .summary-card.is-zero {
   --summary-accent: var(--ink);
 }
 .pending-section {
@@ -2982,11 +2975,6 @@ th {
   .profit-details .summary-term-heading {
     flex-basis: 140px;
     gap: 8px;
-  }
-  .calculation-mark {
-    width: 24px;
-    height: 24px;
-    font-size: 20px;
   }
   .profit-details .summary-card strong {
     flex: 0 1 auto;

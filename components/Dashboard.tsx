@@ -930,9 +930,6 @@ export default function Dashboard({ today }: { today: string }) {
                         }
                       >
                         <div className="summary-term-heading">
-                          <span className="calculation-mark" aria-hidden="true">
-                            =
-                          </span>
                           <span>Ganancia</span>
                         </div>
                         <strong
@@ -948,42 +945,24 @@ export default function Dashboard({ today }: { today: string }) {
                         role="group"
                         aria-label="Detalle de la ganancia"
                       >
-                        <div className="summary-card collected">
+                        <div className={"summary-card collected" + (summary!.income === 0 ? " is-zero" : "")}>
                           <div className="summary-term-heading">
-                            <span
-                              className="calculation-mark"
-                              aria-hidden="true"
-                            >
-                              +
-                            </span>
                             <span>Total de ventas</span>
                           </div>
                           <strong className="number">
                             {money(summary!.income)}
                           </strong>
                         </div>
-                        <div className="summary-card expense-total">
+                        <div className={"summary-card expense-total" + (summary!.expenses === 0 ? " is-zero" : "")}>
                           <div className="summary-term-heading">
-                            <span
-                              className="calculation-mark"
-                              aria-hidden="true"
-                            >
-                              −
-                            </span>
                             <span>Gastos del periodo</span>
                           </div>
                           <strong className="number">
                             {money(summary!.expenses)}
                           </strong>
                         </div>
-                        <div className="summary-card commission-total">
+                        <div className={"summary-card commission-total" + (summary!.commissions === 0 ? " is-zero" : "")}>
                           <div className="summary-term-heading">
-                            <span
-                              className="calculation-mark"
-                              aria-hidden="true"
-                            >
-                              −
-                            </span>
                             <span>Comisiones de estas ventas</span>
                           </div>
                           <strong className="number">

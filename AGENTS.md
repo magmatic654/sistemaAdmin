@@ -2,9 +2,11 @@
 
 - Mantener sólo tres secciones principales: Registro, Resumen y Empleados.
 - No implementar inicio de sesión mientras el propietario no lo solicite.
-- Fondo blanco, letra grande y mínimo texto. Usar tonos neutros: verde sólo para
-  ganancia positiva, rojo para pérdida o errores/acciones destructivas. Cero neutro.
-  No agregar gráficas ni colores por categoría financiera.
+- Fondo blanco, letra grande y mínimo texto. En el desglose de ganancia, usar sólo
+  texto verde para ventas/ganancia positiva y rojo para gastos/comisiones/pérdida.
+  Cero, ventas por revisar y comisiones congeladas quedan neutros. No agregar
+  gráficas, fondos de color ni indicadores de cálculo (+, −, =) a las tarjetas.
+  Reservar también el rojo para errores/acciones destructivas.
 - Ninguna vista ni formulario debe generar desplazamiento horizontal, tampoco
   dentro de tablas o paneles. Adaptar el contenido al ancho; sólo se permite scroll Y.
 - Todo registro financiero requiere confirmación manual. No importar ni mostrar
