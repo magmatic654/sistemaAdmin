@@ -112,6 +112,9 @@ Las variables privadas, respaldos y datos de QA quedan fuera de Git.
 ## Cifras y persistencia
 
 Ganancia = entradas − salidas − comisiones generadas en el período.
+La tarjeta Total de ventas usa las entradas del mismo periodo. Los gastos y
+comisiones se descuentan al registrarse, aunque estén pendientes de pago;
+liquidarlos después no vuelve a descontarlos. Las anulaciones quedan fuera.
 Las ventas se registran con cobro completo al momento; no hay ventas a crédito
 ni abonos de clientes. Los saldos pendientes de proveedores abarcan todas las fechas.
 Los pagos parciales de salidas se ligan al gasto original y no crean otra compra.

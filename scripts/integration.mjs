@@ -1265,6 +1265,221 @@ try {
       "1",
     );
   });
+  const accountingEmployee = await run("employee.save", {
+    name: "Ganancia por periodo QA",
+    phone: "",
+    position: "Técnico",
+  });
+  async function accountingMovement(kind, date, amount, extra = {}) {
+    return run("movement.create", {
+      kind,
+      date,
+      manual: kind === "entrada",
+      folio: "QA-GANANCIA-" + randomUUID(),
+      origin: "manual",
+      concept: "Conciliación de ganancia QA",
+      category: kind === "entrada" ? "Venta manual" : "Gasto operativo",
+      contact:
+        kind === "entrada" ? "Cliente contable QA" : "Proveedor contable QA",
+      phone: "",
+      items: [
+        { description: "Importe contable QA", quantity: 1, unitPrice: amount },
+      ],
+      vatIncluded: true,
+      method: "efectivo",
+      received: kind === "entrada" ? amount : "0",
+      reference: "",
+      notes: "",
+      commission: null,
+      ...extra,
+    });
+  }
+  async function accountingSummary(from, to = from) {
+    const { summary } = await getState(new URLSearchParams({ from, to }));
+    return Object.fromEntries(
+      [
+        "income",
+        "expenses",
+        "commissions",
+        "profit",
+        "collected",
+        "paid",
+        "commissionPaid",
+        "cash",
+      ].map((key) => [key, summary[key]]),
+    );
+  }
+  const januaryAccounting = {
+    income: 100000,
+    expenses: 30000,
+    commissions: 10000,
+    profit: 60000,
+    collected: 100000,
+    paid: 0,
+    commissionPaid: 0,
+    cash: 100000,
+  };
+  let accountingSale, accountingExpense;
+  await test("period profit uses complete sale totals minus incurred expenses and commissions, independently of cash and VAT breakdown", async () => {
+    assert.equal(
+      (
+        await getState(
+          new URLSearchParams({ from: "2002-01-01", to: "2002-04-30" }),
+        )
+      ).total,
+      0,
+      "Accounting dates are isolated from the other disposable fixtures.",
+    );
+    accountingSale = await accountingMovement(
+      "entrada",
+      "2002-01-15",
+      "1000.00",
+      {
+        commission: { employeeId: accountingEmployee.id, value: "100.00" },
+      },
+    );
+    accountingExpense = await accountingMovement(
+      "salida",
+      "2002-01-15",
+      "300.00",
+    );
+    const detail = await movementDetail(accountingSale.id);
+    assert.equal(detail.movement.total_cents, 100000);
+    assert.equal(detail.movement.subtotal_cents, 86207);
+    assert.equal(detail.movement.tax_cents, 13793);
+    assert.deepEqual(await accountingSummary("2002-01-15"), januaryAccounting);
+    assert.deepEqual(
+      await accountingSummary("2002-01-01", "2002-01-31"),
+      januaryAccounting,
+    );
+    assert.deepEqual(
+      await accountingSummary("2002-01-01", "2002-01-15"),
+      januaryAccounting,
+    );
+    assert.deepEqual(
+      await accountingSummary("2002-01-15", "2002-01-31"),
+      januaryAccounting,
+    );
+    for (const [from, to] of [
+      ["2002-01-01", "2002-01-14"],
+      ["2002-01-16", "2002-01-31"],
+    ])
+      assert.deepEqual(await accountingSummary(from, to), {
+        income: 0,
+        expenses: 0,
+        commissions: 0,
+        profit: 0,
+        collected: 0,
+        paid: 0,
+        commissionPaid: 0,
+        cash: 0,
+      });
+  });
+  await test("later supplier and commission settlements change cash in their payment month without subtracting profit again", async () => {
+    await run("payment.create", {
+      movementId: accountingExpense.id,
+      date: "2002-02-10",
+      amount: "300.00",
+      method: "transferencia",
+      reference: "Gasto de enero pagado en febrero QA",
+    });
+    const commissionId = (await movementDetail(accountingSale.id)).movement
+      .commission_id;
+    await run("commission.pay", { id: commissionId, date: "2002-02-10" });
+    assert.deepEqual(
+      await accountingSummary("2002-01-01", "2002-01-31"),
+      januaryAccounting,
+    );
+    assert.deepEqual(await accountingSummary("2002-02-01", "2002-02-28"), {
+      income: 0,
+      expenses: 0,
+      commissions: 0,
+      profit: 0,
+      collected: 0,
+      paid: 30000,
+      commissionPaid: 10000,
+      cash: -40000,
+    });
+    assert.deepEqual(await accountingSummary("2002-01-15", "2002-02-10"), {
+      ...januaryAccounting,
+      paid: 30000,
+      commissionPaid: 10000,
+      cash: 60000,
+    });
+    assert.deepEqual(await accountingSummary("2002-02-10"), {
+      income: 0,
+      expenses: 0,
+      commissions: 0,
+      profit: 0,
+      collected: 0,
+      paid: 30000,
+      commissionPaid: 10000,
+      cash: -40000,
+    });
+  });
+  await test("a different period stays isolated and losses remain negative even when its expenses are unpaid", async () => {
+    await accountingMovement("entrada", "2002-03-15", "200.00");
+    await accountingMovement("salida", "2002-03-15", "500.00");
+    assert.deepEqual(await accountingSummary("2002-03-01", "2002-03-31"), {
+      income: 20000,
+      expenses: 50000,
+      commissions: 0,
+      profit: -30000,
+      collected: 20000,
+      paid: 0,
+      commissionPaid: 0,
+      cash: 20000,
+    });
+    assert.deepEqual(
+      await accountingSummary("2002-01-01", "2002-01-31"),
+      januaryAccounting,
+    );
+    assert.equal(
+      (await accountingSummary("2002-02-01", "2002-02-28")).profit,
+      0,
+    );
+  });
+  await test("voided sales, unpaid commissions and expenses leave the period totals and cash while preserving their records", async () => {
+    const sale = await accountingMovement("entrada", "2002-04-01", "100.00", {
+      commission: { employeeId: accountingEmployee.id, value: "10.00" },
+    });
+    const expense = await accountingMovement("salida", "2002-04-01", "40.00", {
+      received: "40.00",
+    });
+    assert.deepEqual(await accountingSummary("2002-04-01", "2002-04-30"), {
+      income: 10000,
+      expenses: 4000,
+      commissions: 1000,
+      profit: 5000,
+      collected: 10000,
+      paid: 4000,
+      commissionPaid: 0,
+      cash: 6000,
+    });
+    await run("movement.void", { id: sale.id, reason: "Venta equivocada QA" });
+    await run("movement.void", {
+      id: expense.id,
+      reason: "Gasto equivocado QA",
+    });
+    assert.deepEqual(await accountingSummary("2002-04-01", "2002-04-30"), {
+      income: 0,
+      expenses: 0,
+      commissions: 0,
+      profit: 0,
+      collected: 0,
+      paid: 0,
+      commissionPaid: 0,
+      cash: 0,
+    });
+    const preservedSale = await movementDetail(sale.id),
+      preservedExpense = await movementDetail(expense.id);
+    assert.ok(preservedSale.movement.voided_at);
+    assert.equal(preservedSale.movement.commission_cents, 1000);
+    assert.equal(preservedSale.movement.commission_paid_on, null);
+    assert.equal(preservedSale.payments.length, 1);
+    assert.ok(preservedExpense.movement.voided_at);
+    assert.equal(preservedExpense.payments.length, 1);
+  });
   if (process.argv.includes("--keep")) {
     await fs.mkdir(new URL("../.local/", import.meta.url), { recursive: true });
     await fs.writeFile(
