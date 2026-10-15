@@ -219,6 +219,194 @@ export function CommissionFields({
   );
 }
 
+export function ManualSaleForm({
+  employees,
+  defaultRateBps,
+  write,
+  onDone,
+  onClose,
+}: {
+  employees: Employee[];
+  defaultRateBps: number | null;
+  write: Write;
+  onDone: () => void;
+  onClose: () => void;
+}) {
+  const [description, setDescription] = useState(""),
+    [quantity, setQuantity] = useState("1"),
+    [unitPrice, setUnitPrice] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("efectivo"),
+    [contact, setContact] = useState("Público general");
+  const [withCommission, setWithCommission] = useState(false),
+    [employeeId, setEmployeeId] = useState(""),
+    [customAmount, setCustomAmount] = useState<string | null>(null);
+  const [suggestedRateBps] = useState(defaultRateBps);
+  const estimate =
+    Math.round((Number(unitPrice) || 0) * 100) * (Number(quantity) || 0);
+  const total =
+    Number.isSafeInteger(estimate) &&
+    estimate >= 0 &&
+    estimate <= 99_999_999_999
+      ? estimate
+      : null;
+  const amount =
+    customAmount ??
+    (suggestedRateBps && total !== null && total > 0
+      ? (Math.round((total * suggestedRateBps) / 10000) / 100).toFixed(2)
+      : "");
+  const activeEmployees = employees.filter((employee) => employee.active);
+  const { busy, error, submit } = useSubmit(write, onDone);
+  function save(event: FormEvent) {
+    event.preventDefault();
+    void submit("sale.manual.create", {
+      description,
+      quantity,
+      unitPrice,
+      method: paymentMethod,
+      contact,
+      commission: withCommission
+        ? {
+            employeeId,
+            mode:
+              customAmount === null && suggestedRateBps ? "percent" : "fixed",
+            value:
+              customAmount === null && suggestedRateBps
+                ? String(suggestedRateBps / 100)
+                : amount,
+          }
+        : null,
+    });
+  }
+  return (
+    <form
+      className="manual-sale-form"
+      onSubmit={save}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && event.target instanceof HTMLInputElement)
+          event.preventDefault();
+      }}
+    >
+      <div className="manual-sale-body">
+        <fieldset className="manual-sale-fields" disabled={busy}>
+          <label className="manual-sale-product">
+            Producto o servicio
+            <input
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+              maxLength={300}
+              placeholder="Ej. Llanta usada 205/55 R16"
+              required
+              data-autofocus
+            />
+          </label>
+          <div className="manual-sale-row manual-sale-pricing">
+            <label>
+              Cantidad
+              <input
+                type="number"
+                min="1"
+                max="100000"
+                step="1"
+                value={quantity}
+                onChange={(event) => setQuantity(event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Precio por unidad
+              <input
+                inputMode="decimal"
+                value={unitPrice}
+                onChange={(event) => setUnitPrice(event.target.value)}
+                placeholder="$0.00"
+                required
+              />
+            </label>
+          </div>
+          <div className="manual-sale-row manual-sale-customer">
+            <Select
+              label="Forma de pago"
+              value={paymentMethod}
+              onChange={setPaymentMethod}
+              options={methodOptions}
+            />
+            <label>
+              Cliente
+              <input
+                value={contact}
+                onChange={(event) => setContact(event.target.value)}
+                maxLength={160}
+              />
+            </label>
+          </div>
+          <section className="manual-sale-commission">
+            <label className="manual-sale-switch">
+              <span>
+                <BadgePercent size={22} />
+                <strong>Agregar comisión</strong>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                checked={withCommission}
+                onChange={(event) => setWithCommission(event.target.checked)}
+              />
+            </label>
+            {withCommission && (
+              <div className="manual-sale-row manual-sale-commission-fields">
+                <Select
+                  label="Comisión para"
+                  value={employeeId}
+                  onChange={setEmployeeId}
+                  options={[
+                    {
+                      value: "",
+                      label: activeEmployees.length
+                        ? "Seleccionar empleado"
+                        : "Sin empleados activos",
+                    },
+                    ...activeEmployees.map((employee) => ({
+                      value: employee.id,
+                      label: employee.name,
+                    })),
+                  ]}
+                />
+                <label>
+                  Monto de comisión
+                  <input
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={(event) => setCustomAmount(event.target.value)}
+                    placeholder="$0.00"
+                    required
+                  />
+                </label>
+              </div>
+            )}
+          </section>
+          <div className="manual-sale-total">
+            <span>Total de la venta</span>
+            <strong className="number">
+              {total === null ? "—" : money(total)}
+            </strong>
+          </div>
+          {error && (
+            <div className="manual-sale-error" role="alert">
+              {error}
+            </div>
+          )}
+        </fieldset>
+      </div>
+      <Footer
+        busy={busy}
+        submitDisabled={total === null}
+        onClose={onClose}
+        label="Guardar venta"
+      />
+    </form>
+  );
+}
+
 export function MovementForm({
   kind,
   source,

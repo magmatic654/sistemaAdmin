@@ -19,18 +19,24 @@ al confirmar una salida y completan el concepto y el pago de capturas futuras.
 
 Las ventas de los otros sistemas nunca se cargan ni suman automáticamente.
 Escanear sólo prerrellena el formulario; el administrador debe guardar para
-registrar. **Nueva venta** abre un formulario manual con folio obligatorio e ID
-impreso opcional. Funciona aunque la venta no exista en los otros sistemas;
-requiere que la base de Administración esté disponible. **Escanear ticket** busca
+registrar. **Nueva venta** abre un formulario manual con producto/servicio,
+cantidad, precio, forma de pago, cliente y comisión opcional (empleado e importe).
+El servidor genera folio interno y fecha comercial; confirma el cobro completo.
+El porcentaje sugerido prerrellena el monto de comisión y éste se puede editar.
+Todos los campos y botones caben sin scroll en móvil y escritorio. Funciona aunque
+la venta no exista en los otros sistemas; requiere que la base de Administración
+esté disponible. **Escanear ticket** busca
 el documento existente y recupera fecha, folio, cliente, teléfono, partidas,
 subtotal, IVA, total y forma de pago. Sólo la confirmación crea el registro.
 
 El servidor resuelve la identidad canónica y PostgreSQL exige UNIQUE(tabla, id).
-La captura manual conserva folio, origen (negro/blanco/sin sistema) e ID disponible.
-Bloqueos transaccionales e índices impiden repetir esos identificadores, incluso
-en guardados simultáneos o al escanear más tarde un ticket capturado manualmente.
-Sin sistema reserva ese folio frente a ambos orígenes. Un folio debe copiarse
-correctamente: sin ID no es posible reconocer el mismo papel bajo otro folio.
+La captura compacta genera `MAN-<UUID de la solicitud>` y conserva ese identificador
+en reintentos simultáneos o posteriores; no pide el ID de otro sistema. Una venta
+manual independiente no se vincula por coincidencias de cliente, producto o precio
+con una venta externa: esos datos pueden coincidir en ventas legítimas distintas.
+Los registros manuales anteriores que conservaron folio/origen e ID mantienen
+sus comprobaciones frente a un escaneo posterior. Bloqueos transaccionales e
+índices impiden repetir esos identificadores, incluso en guardados simultáneos.
 Anular conserva los identificadores ocupados y el historial.
 
 El código impreso incluye versión, tabla e ID:

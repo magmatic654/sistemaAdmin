@@ -2,15 +2,18 @@
 
 ## Captura manual
 
-Nueva venta no consulta ventas de las otras apps. Requiere folio y partidas;
-cliente, teléfono e ID completo impreso son opcionales. Elegir negro o blanco
-si se conoce el origen; Sin sistema reserva ese folio frente a ambos. La venta
-y su comisión se guardan juntas, aunque no exista un documento externo.
+Nueva venta no consulta ventas de las otras apps. Muestra producto/servicio,
+cantidad, precio por unidad, forma de pago y cliente. La comisión opcional se
+asigna en el mismo formulario mediante empleado e importe; éste se sugiere usando
+el porcentaje guardado, y se puede editar. El servidor genera fecha comercial
+y un folio interno `MAN-<UUID de la solicitud>`; la venta se confirma cobrada.
+No solicita folio, ID externo, origen, fecha, categoría, IVA, notas ni teléfono.
 
-El folio debe conservarse tal como aparece en el papel. El sistema evita repetir
-folio/origen e ID disponible, incluido un escaneo posterior. Un ticket manual
-sin ID no puede reconocerse si se le inventa otro folio. Anular no libera los
-identificadores para registrar otra vez el mismo ticket.
+Un reintento conserva el mismo folio interno y no duplica la venta, el cobro ni
+la comisión. Sin el ID o folio externo no se puede reconocer automáticamente un
+papel registrado luego en otra app; no se deduplican ventas por sus importes o
+descripciones. Los registros manuales previos con identidad externa conservan la
+protección cruzada por ID/folio. Anular nunca libera sus identificadores.
 
 ## Escaneo
 

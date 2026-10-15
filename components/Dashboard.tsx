@@ -32,6 +32,7 @@ import {
   ConfirmForm,
   DetailView,
   MasterForm,
+  ManualSaleForm,
   MovementForm,
   PaymentForm,
   TicketLookup,
@@ -456,7 +457,7 @@ export default function Dashboard({ today }: { today: string }) {
 
   const title = dialog
     ? {
-        entrada: "Nueva venta",
+        entrada: dialog.source ? "Nueva venta" : "Registrar nueva venta",
         salida: "Nueva salida",
         ticket: "Escanear ticket",
         employee: dialog.initial ? "Editar empleado" : "Nuevo empleado",
@@ -839,8 +840,19 @@ export default function Dashboard({ today }: { today: string }) {
             if (!writing) setDialog(null);
           }}
           busy={writing}
+          compactSale={dialog.type === "entrada" && !dialog.source}
         >
-          {(dialog.type === "entrada" || dialog.type === "salida") && (
+          {dialog.type === "entrada" && !dialog.source && (
+            <ManualSaleForm
+              employees={data.employees}
+              defaultRateBps={data.commissionRateBps}
+              write={write}
+              onDone={saved}
+              onClose={() => setDialog(null)}
+            />
+          )}
+          {(dialog.type === "salida" ||
+            (dialog.type === "entrada" && dialog.source)) && (
             <MovementForm
               kind={dialog.type}
               source={dialog.source}

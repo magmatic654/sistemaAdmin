@@ -1901,6 +1901,434 @@ th {
     font-size: 15px;
   }
 }
+/* Manual sale: one compact sheet, with the complete set of fields in view. */
+.manual-sale-backdrop {
+  padding: 16px;
+}
+.modal.manual-sale-modal {
+  width: 700px;
+  max-height: calc(100dvh - 32px);
+  border-radius: 18px;
+}
+.manual-sale-modal .modal-header {
+  padding: 18px 24px;
+  border-top: 3px solid #1875ef;
+}
+.manual-sale-modal .modal-header h2 {
+  font-size: 24px;
+  line-height: 1.25;
+}
+.manual-sale-modal .modal-header .icon-button {
+  width: 32px;
+  height: 32px;
+}
+.manual-sale-body {
+  padding: 20px 24px 12px;
+  min-height: 0;
+}
+.manual-sale-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  padding: 0;
+}
+.manual-sale-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.manual-sale-modal label {
+  gap: 6px;
+  font-size: 17px;
+  line-height: 1.3;
+}
+.manual-sale-modal .field-label {
+  font-size: 17px;
+  line-height: 1.3;
+  margin-bottom: 6px;
+}
+.manual-sale-modal input:not([type="checkbox"]),
+.manual-sale-modal .choice-trigger {
+  min-height: 46px;
+  height: 46px;
+  padding: 10px 12px;
+  font-size: 18px;
+  border-radius: 10px;
+}
+.manual-sale-modal input::placeholder {
+  font-size: 17px;
+}
+.manual-sale-modal .choice-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+  min-width: 100%;
+  max-height: min(220px, 35dvh);
+  box-shadow: 0 6px 20px #182d4818;
+}
+.manual-sale-modal .choice-menu button {
+  font-size: 16px;
+  padding: 10px;
+}
+.manual-sale-commission {
+  padding: 14px;
+  border: 1px solid #e1e6ee;
+  border-radius: 14px;
+  background: #f8faff;
+  min-width: 0;
+}
+.manual-sale-modal .manual-sale-switch {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.manual-sale-switch span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.manual-sale-switch svg {
+  color: #1875ef;
+}
+.manual-sale-switch strong {
+  font-weight: 600;
+}
+.manual-sale-switch input {
+  appearance: none;
+  width: 46px;
+  min-height: 28px;
+  height: 28px;
+  padding: 3px;
+  border: 0;
+  border-radius: 20px;
+  background: #a6b0bf;
+  cursor: pointer;
+  flex: none;
+}
+.manual-sale-switch input::before {
+  content: "";
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+}
+.manual-sale-switch input:checked {
+  background: #1875ef;
+}
+.manual-sale-switch input:checked::before {
+  transform: translateX(18px);
+}
+.manual-sale-commission-fields {
+  border-top: 1px solid #e1e6ee;
+  padding-top: 12px;
+  margin-top: 12px;
+}
+.manual-sale-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: #edf4ff;
+  font-size: 17px;
+  color: #52657d;
+  min-height: 52px;
+}
+.manual-sale-total strong {
+  color: #176de0;
+  font-size: 27px;
+  font-weight: 650;
+  line-height: 1;
+}
+.manual-sale-total span {
+  min-width: 0;
+}
+.manual-sale-total strong {
+  flex: none;
+  font-size: clamp(18px, 4.4vw, 27px);
+}
+.manual-sale-error {
+  color: var(--red);
+  font-size: 14px;
+  line-height: 1.3;
+}
+.manual-sale-modal .modal-footer {
+  padding: 14px 24px;
+}
+.manual-sale-modal .modal-footer .button {
+  min-height: 46px;
+  font-size: 17px;
+  padding: 10px 18px;
+}
+.manual-sale-modal .modal-footer .primary {
+  background: #1875ef;
+}
+.manual-sale-modal .modal-footer .primary:hover:not(:disabled) {
+  background: #0b5eca;
+}
+@media (max-width: 760px) {
+  .manual-sale-backdrop {
+    padding: 8px;
+  }
+  .modal.manual-sale-modal {
+    max-height: calc(100dvh - 16px);
+  }
+  .manual-sale-modal .modal-header {
+    padding: 15px 16px;
+  }
+  .manual-sale-modal .modal-header h2 {
+    font-size: 22px;
+  }
+  .manual-sale-body {
+    padding: 16px 16px 10px;
+  }
+  .manual-sale-fields {
+    gap: 14px;
+  }
+  .manual-sale-row {
+    gap: 12px;
+  }
+  .manual-sale-modal label,
+  .manual-sale-modal .field-label {
+    font-size: 16px;
+    line-height: 1.25;
+  }
+  .manual-sale-modal input:not([type="checkbox"]),
+  .manual-sale-modal .choice-trigger {
+    min-height: 44px;
+    height: 44px;
+    font-size: 16px;
+    padding: 9px 10px;
+  }
+  .manual-sale-modal input::placeholder {
+    font-size: 15px;
+  }
+  .manual-sale-commission {
+    padding: 12px;
+  }
+  .manual-sale-switch span {
+    gap: 7px;
+  }
+  .manual-sale-switch strong {
+    font-size: 16px;
+  }
+  .manual-sale-total {
+    padding: 10px 12px;
+    min-height: 46px;
+    font-size: 16px;
+  }
+  .manual-sale-total strong {
+    font-size: 25px;
+  }
+  .manual-sale-modal .modal-footer {
+    padding: 12px 16px;
+  }
+  .manual-sale-modal .modal-footer .button {
+    font-size: 16px;
+    padding: 9px 12px;
+    min-height: 44px;
+  }
+}
+@media (max-height: 700px) {
+  .manual-sale-modal .modal-header {
+    padding: 12px 18px;
+  }
+  .manual-sale-modal .modal-header h2 {
+    font-size: 22px;
+  }
+  .manual-sale-body {
+    padding: 14px 16px 8px;
+  }
+  .manual-sale-fields {
+    gap: 12px;
+  }
+  .manual-sale-modal label,
+  .manual-sale-modal .field-label {
+    font-size: 16px;
+    line-height: 1.2;
+  }
+  .manual-sale-modal input:not([type="checkbox"]),
+  .manual-sale-modal .choice-trigger {
+    height: 42px;
+    min-height: 42px;
+    padding: 8px 10px;
+    font-size: 16px;
+  }
+  .manual-sale-commission {
+    padding: 12px;
+  }
+  .manual-sale-commission-fields {
+    margin-top: 10px;
+    padding-top: 10px;
+  }
+  .manual-sale-total {
+    min-height: 44px;
+    padding: 10px 12px;
+  }
+  .manual-sale-modal .modal-footer {
+    padding: 10px 16px;
+  }
+  .manual-sale-modal .modal-footer .button {
+    min-height: 42px;
+    padding: 8px 14px;
+  }
+}
+@media (max-height: 620px) {
+  .manual-sale-backdrop {
+    padding: 6px;
+  }
+  .modal.manual-sale-modal {
+    max-height: calc(100dvh - 12px);
+    border-radius: 13px;
+  }
+  .manual-sale-modal .modal-header {
+    padding: 9px 12px;
+  }
+  .manual-sale-modal .modal-header h2 {
+    font-size: 20px;
+  }
+  .manual-sale-body {
+    padding: 10px 12px 6px;
+  }
+  .manual-sale-fields {
+    gap: 8px;
+  }
+  .manual-sale-modal label {
+    gap: 4px;
+  }
+  .manual-sale-modal label,
+  .manual-sale-modal .field-label {
+    font-size: 14px;
+    line-height: 1.2;
+  }
+  .manual-sale-modal .field-label {
+    margin-bottom: 4px;
+  }
+  .manual-sale-modal input:not([type="checkbox"]),
+  .manual-sale-modal .choice-trigger {
+    height: 38px;
+    min-height: 38px;
+    padding: 6px 9px;
+  }
+  .manual-sale-commission {
+    padding: 10px;
+  }
+  .manual-sale-switch strong {
+    font-size: 15px;
+  }
+  .manual-sale-commission-fields {
+    margin-top: 8px;
+    padding-top: 8px;
+  }
+  .manual-sale-total {
+    min-height: 40px;
+    padding: 8px 12px;
+  }
+  .manual-sale-total strong {
+    font-size: 23px;
+  }
+  .manual-sale-modal .modal-footer {
+    padding: 8px 12px;
+  }
+  .manual-sale-modal .modal-footer .button {
+    min-height: 38px;
+    padding: 6px 12px;
+    font-size: 15px;
+  }
+}
+@media (min-width: 500px) and (max-height: 500px) {
+  .modal.manual-sale-modal {
+    width: 900px;
+  }
+  .manual-sale-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas: "product commission" "pricing commission" "customer total" "feedback feedback";
+    column-gap: 20px;
+    align-items: start;
+  }
+  .manual-sale-product {
+    grid-area: product;
+  }
+  .manual-sale-pricing {
+    grid-area: pricing;
+  }
+  .manual-sale-customer {
+    grid-area: customer;
+  }
+  .manual-sale-commission {
+    grid-area: commission;
+  }
+  .manual-sale-total {
+    grid-area: total;
+    align-self: end;
+  }
+  .manual-sale-error {
+    grid-area: feedback;
+  }
+}
+@media (min-width: 500px) and (max-height: 360px) {
+  .manual-sale-modal .modal-header {
+    padding: 4px 12px;
+  }
+  .manual-sale-modal .modal-header h2 {
+    font-size: 19px;
+  }
+  .manual-sale-body {
+    padding: 8px 12px 4px;
+  }
+  .manual-sale-fields {
+    gap: 4px 16px;
+    grid-template-columns: 0.9fr 1.1fr;
+  }
+  .manual-sale-row {
+    gap: 10px;
+  }
+  .manual-sale-modal label,
+  .manual-sale-modal .field-label {
+    font-size: 13px;
+  }
+  .manual-sale-modal input:not([type="checkbox"]),
+  .manual-sale-modal .choice-trigger {
+    min-height: 34px;
+    height: 34px;
+    padding: 4px 8px;
+  }
+  .manual-sale-commission {
+    padding: 8px;
+  }
+  .manual-sale-commission-fields {
+    padding-top: 6px;
+    margin-top: 6px;
+  }
+  .manual-sale-switch strong {
+    font-size: 14px;
+  }
+  .manual-sale-total {
+    min-height: 36px;
+    padding: 6px 10px;
+    font-size: 13px;
+  }
+  .manual-sale-total span {
+    line-height: 1.2;
+  }
+  .manual-sale-total strong {
+    font-size: 20px;
+  }
+  .manual-sale-error {
+    font-size: 13px;
+    line-height: 1.2;
+  }
+  .manual-sale-modal .modal-footer {
+    padding: 4px 12px;
+  }
+  .manual-sale-modal .modal-footer .button {
+    min-height: 34px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *:before,

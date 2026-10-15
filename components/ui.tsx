@@ -260,12 +260,14 @@ export function Modal({
   children,
   onClose,
   busy = false,
+  compactSale = false,
 }: {
   title: string;
   subtitle?: string;
   children: ReactNode;
   onClose: () => void;
   busy?: boolean;
+  compactSale?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const id = useId();
@@ -286,9 +288,13 @@ export function Modal({
     };
   }, []);
   return (
-    <div className="modal-backdrop">
+    <div
+      className={
+        "modal-backdrop" + (compactSale ? " manual-sale-backdrop" : "")
+      }
+    >
       <div
-        className="modal"
+        className={"modal" + (compactSale ? " manual-sale-modal" : "")}
         ref={ref}
         role="dialog"
         aria-modal="true"

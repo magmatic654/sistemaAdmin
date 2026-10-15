@@ -14,6 +14,7 @@ import {
   parseTicketReference,
   periodRange,
   ticketReference,
+  businessToday,
   type RecordInput,
   type Line,
 } from "./domain.ts";
@@ -299,6 +300,8 @@ async function addCommission(
 ) {
   if (raw == null) return;
   const commission = record(raw);
+  if (!commission.employeeId)
+    throw new ValidationError("Selecciona un empleado para la comisión.");
   const employeeId = uuid(commission.employeeId);
   const employee = await client.query(
     "SELECT id FROM administracion.employees WHERE id=$1 AND active FOR SHARE",
@@ -696,7 +699,43 @@ async function executeAction(
   client: PoolClient,
   action: string,
   input: RecordInput,
+  requestId: string,
 ): Promise<RecordInput> {
+  if (action === "sale.manual.create") {
+    const lines = manualLines([
+      {
+        description: input.description,
+        quantity: input.quantity,
+        unitPrice: input.unitPrice,
+      },
+    ]);
+    const today = businessToday();
+    return createMovement(client, {
+      kind: "entrada",
+      manual: true,
+      folio: "MAN-" + requestId,
+      origin: "manual",
+      date: today,
+      paymentDate: today,
+      concept: lines[0].description,
+      category: "Venta manual",
+      contact: text(input.contact, "Cliente", 160, false) || "Público general",
+      phone: "",
+      items: [
+        {
+          description: lines[0].description,
+          quantity: lines[0].quantity,
+          unitPrice: input.unitPrice,
+        },
+      ],
+      vatIncluded: false,
+      method: input.method,
+      received: (lines[0].totalCents / 100).toFixed(2),
+      notes: "",
+      reference: "",
+      commission: input.commission,
+    });
+  }
   if (action === "movement.create") return createMovement(client, input);
   if (action === "payment.create")
     return addPayment(client, uuid(input.movementId), input);
@@ -825,7 +864,7 @@ export async function mutate(
         throw new ValidationError("La solicitud ya fue usada con otros datos.");
       return previous.rows[0].result;
     }
-    const result = await executeAction(client, action, input);
+    const result = await executeAction(client, action, input, requestId);
     await client.query(
       "INSERT INTO administracion.operations(id,hash,action,result) VALUES($1,$2,$3,$4::jsonb)",
       [requestId, hash, action, JSON.stringify(result)],

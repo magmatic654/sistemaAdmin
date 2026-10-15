@@ -6,8 +6,11 @@
 - Todo registro financiero requiere confirmación manual. No importar ni mostrar
   ventas de las otras apps sin una búsqueda explícita de ticket.
 - Una venta sólo puede registrarse una vez por su identidad canónica (tabla, id).
-- Nueva venta abre captura manual con folio, aunque no exista en los otros sistemas.
+- Nueva venta abre captura manual con folio y fecha automáticos, aunque no exista en los otros sistemas.
   Escanear ticket busca y prerrellena. Nunca unir esos dos flujos.
+- El formulario manual sólo muestra producto/servicio, cantidad, precio, forma de
+  pago, cliente y comisión opcional (empleado e importe). Todo debe caber sin scroll
+  en escritorio y móvil; distribuir en columnas para pantallas horizontales bajas.
 - Comprobar folio/origen e ID disponible para impedir duplicados entre captura
   manual y escaneo. La comisión se asigna junto con la venta, nunca después.
 - Liquidar comisiones por empleado y día/semana/mes, sólo las pendientes revisadas.

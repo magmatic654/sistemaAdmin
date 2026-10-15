@@ -719,6 +719,82 @@ try {
     );
     assert.equal(records.rows.length, 1);
   });
+  await test("compact manual sale generates its identity/date and retries atomically without hidden client fields", async () => {
+    const request = randomUUID(),
+      payload = {
+        description: "Venta compacta QA",
+        quantity: 2,
+        unitPrice: "125.50",
+        method: "tarjeta",
+        contact: "Cliente compacto QA",
+        commission: { employeeId: employee.id, mode: "fixed", value: "25.10" },
+        folio: "IGNORAR",
+        date: "2000-01-01",
+        received: "0.01",
+        vatIncluded: true,
+      };
+    const sourceCount = (
+      await connection.query("SELECT count(*) FROM public.ventas")
+    ).rows[0].count;
+    const results = await Promise.all([
+      run("sale.manual.create", payload, request),
+      run("sale.manual.create", payload, request),
+    ]);
+    assert.equal(results[0].id, results[1].id);
+    const { movement, payments } = await movementDetail(results[0].id);
+    assert.equal(movement.manual_folio, "MAN-" + request);
+    assert.equal(movement.date, day);
+    assert.equal(movement.source_id, null);
+    assert.equal(movement.total_cents, 25100);
+    assert.equal(movement.tax_cents, 0);
+    assert.equal(movement.paid_cents, 25100);
+    assert.equal(movement.commission_cents, 2510);
+    assert.equal(payments.length, 1);
+    assert.equal(
+      (await connection.query("SELECT count(*) FROM public.ventas")).rows[0]
+        .count,
+      sourceCount,
+    );
+    await assert.rejects(
+      run("sale.manual.create", { ...payload, unitPrice: "126.00" }, request),
+      /otros datos/,
+    );
+  });
+  await test("compact manual sale keeps commission optional and invalid commissions roll back the whole sale", async () => {
+    const payload = {
+      description: "Servicio compacto QA",
+      quantity: 1,
+      unitPrice: "100",
+      method: "efectivo",
+      contact: "",
+      commission: null,
+    };
+    const result = await run("sale.manual.create", payload),
+      detail = await movementDetail(result.id);
+    assert.equal(detail.movement.contact, "Público general");
+    assert.equal(detail.movement.commission_id, null);
+    const before = (
+      await connection.query("SELECT count(*) FROM administracion.movements")
+    ).rows[0].count;
+    await assert.rejects(
+      run("sale.manual.create", {
+        ...payload,
+        commission: { employeeId: employee.id, mode: "fixed", value: "101" },
+      }),
+      /no superar/,
+    );
+    assert.equal(
+      (await connection.query("SELECT count(*) FROM administracion.movements"))
+        .rows[0].count,
+      before,
+    );
+    const another = await run("sale.manual.create", payload);
+    assert.notEqual(
+      another.id,
+      result.id,
+      "Separate confirmed sales may legitimately have the same contents.",
+    );
+  });
   if (process.argv.includes("--keep")) {
     await fs.mkdir(new URL("../.local/", import.meta.url), { recursive: true });
     await fs.writeFile(
