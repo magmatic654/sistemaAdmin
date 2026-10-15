@@ -1,5 +1,6 @@
 -- Every income is explicitly captured against one canonical printed ticket.
 -- No feeds, automatic imports, source totals or source cancellations drive the dashboard.
+DROP VIEW IF EXISTS administracion.ledger;
 DO $$ BEGIN
   IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conname='admin_income_requires_ticket' AND conrelid='administracion.movements'::regclass) THEN
     ALTER TABLE administracion.movements ADD CONSTRAINT admin_income_requires_ticket

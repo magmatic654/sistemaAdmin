@@ -63,15 +63,12 @@ CREATE TABLE IF NOT EXISTS administracion.audit (
   action text NOT NULL, entity_id uuid NOT NULL, details jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE OR REPLACE VIEW administracion.ledger AS
+CREATE OR REPLACE VIEW administracion.manual_ledger AS
 SELECT m.*,
   COALESCE((SELECT sum(p.amount_cents) FROM administracion.payments p WHERE p.movement_id=m.id),0)::bigint AS paid_cents,
-  (CASE WHEN m.source_kind='ventas' THEN v.id IS NULL OR COALESCE(v.cancelada,false)
-        WHEN m.source_kind='ventas_productos' THEN vp.id IS NULL ELSE false END) AS source_cancelled,
+  false AS source_cancelled,
   c.id AS commission_id,c.employee_id,e.name AS employee_name,c.amount_cents AS commission_cents,c.paid_on AS commission_paid_on
 FROM administracion.movements m
-LEFT JOIN public.ventas v ON m.source_kind='ventas' AND m.source_id=v.id
-LEFT JOIN public.ventas_productos vp ON m.source_kind='ventas_productos' AND m.source_id=vp.id
 LEFT JOIN administracion.commissions c ON c.movement_id=m.id
 LEFT JOIN administracion.employees e ON e.id=c.employee_id;
 INSERT INTO administracion.configuration(singleton,version) VALUES(true,1) ON CONFLICT DO NOTHING;

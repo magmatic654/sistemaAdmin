@@ -1,3 +1,6 @@
-export default function Home() {
-  return <main><h1>Administración</h1><p>Entradas, salidas, cobros y comisiones.</p></main>;
+import { businessToday } from "@/lib/domain";
+import Dashboard from "@/components/Dashboard";
+export const dynamic = "force-dynamic";
+export default async function Home() {
+  return <Dashboard today={businessToday()} />;
 }
