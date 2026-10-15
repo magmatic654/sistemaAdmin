@@ -30,7 +30,11 @@
 - Preservar los controles de identidad de ambas bases y los registros históricos.
 - Ejecutar integración únicamente sobre los dos clones desechables de Administración
   y origen. No crear fixtures en las bases de desarrollo.
-- No usar producción para desarrollar o probar. No guardar secretos en Git.
+- No usar producción para desarrollar o probar. La lectura operativa de tickets
+desplegados está autorizada con usuario SELECT exclusivo e identidad verificada;
+requiere SHARED_DATABASE_ALLOW_PRODUCTION_READS=true en el servidor local.
+Las pruebas y fixtures usan exclusivamente el perfil privado de desarrollo y clones.
+No guardar secretos en Git.
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

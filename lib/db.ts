@@ -19,11 +19,19 @@ function configuration(source: boolean): Settings {
       "Administración requiere exclusivamente la conexión compartida de lectura y su base propia.",
     );
   if (
-    (process.env.SHARED_DATABASE_ENVIRONMENT === "production" ||
-      process.env.ADMIN_DATABASE_ENVIRONMENT === "production") &&
+    process.env.ADMIN_DATABASE_ENVIRONMENT === "production" &&
     process.env.NODE_ENV !== "production"
   )
     throw Error("Desarrollo no puede operar la base de producción.");
+  if (
+    process.env.SHARED_DATABASE_ENVIRONMENT === "production" &&
+    (process.env.NODE_ENV === "test" ||
+      (process.env.NODE_ENV !== "production" &&
+        process.env.SHARED_DATABASE_ALLOW_PRODUCTION_READS !== "true"))
+  )
+    throw Error(
+      "La lectura de producción requiere autorización explícita y no está permitida en pruebas.",
+    );
   const environment =
     process.env[
       source ? "SHARED_DATABASE_ENVIRONMENT" : "ADMIN_DATABASE_ENVIRONMENT"
@@ -87,6 +95,121 @@ export function databaseSettings(): Settings {
 export function sourceSettings(): Settings {
   return configuration(true);
 }
+
+type ReaderRoleAccess = {
+  superuser: boolean;
+  create_database: boolean;
+  create_role: boolean;
+  replication: boolean;
+  bypass_rls: boolean;
+  database_owner: boolean;
+  same_role: boolean;
+};
+type ReaderTableAccess = {
+  table_name: string;
+  select_allowed: boolean;
+  insert_allowed: boolean;
+  update_allowed: boolean;
+  delete_allowed: boolean;
+  truncate_allowed: boolean;
+  references_allowed: boolean;
+  trigger_allowed: boolean;
+};
+type ReaderSchemaAccess = { schema_name: string; create_allowed: boolean };
+const readerTables = [
+  "public.ventas",
+  "public.ventas_productos",
+  "shared_runtime.configuration",
+] as const;
+const readerSchemas = ["public", "shared_runtime"] as const;
+
+/** Fail closed when effective production access exceeds the dedicated reader. */
+export function validateProductionReaderAccess(
+  role: ReaderRoleAccess | undefined,
+  tables: ReaderTableAccess[],
+  schemas: ReaderSchemaAccess[],
+): void {
+  const deniedFlags: (keyof ReaderRoleAccess)[] = [
+    "superuser",
+    "create_database",
+    "create_role",
+    "replication",
+    "bypass_rls",
+    "database_owner",
+  ];
+  const deniedTableFlags: (keyof ReaderTableAccess)[] = [
+    "insert_allowed",
+    "update_allowed",
+    "delete_allowed",
+    "truncate_allowed",
+    "references_allowed",
+    "trigger_allowed",
+  ];
+  if (
+    !role ||
+    role.same_role !== true ||
+    deniedFlags.some((flag) => role[flag] !== false) ||
+    tables.length !== readerTables.length ||
+    readerTables.some((name) => {
+      const matches = tables.filter((table) => table.table_name === name);
+      return (
+        matches.length !== 1 ||
+        matches[0].select_allowed !== true ||
+        deniedTableFlags.some((flag) => matches[0][flag] !== false)
+      );
+    }) ||
+    schemas.length !== readerSchemas.length ||
+    readerSchemas.some((name) => {
+      const matches = schemas.filter((schema) => schema.schema_name === name);
+      return matches.length !== 1 || matches[0].create_allowed !== false;
+    })
+  )
+    throw Error(
+      "La conexión de producción requiere un usuario exclusivo de sólo lectura, sin propiedad ni permisos de escritura o creación.",
+    );
+}
+
+async function verifyProductionReader(client: PoolClient): Promise<void> {
+  const role = await client.query<ReaderRoleAccess>(`
+    SELECT bool_or(r.rolsuper) AS superuser,
+      bool_or(r.rolcreatedb) AS create_database,
+      bool_or(r.rolcreaterole) AS create_role,
+      bool_or(r.rolreplication) AS replication,
+      bool_or(r.rolbypassrls) AS bypass_rls,
+      bool_or(pg_has_role(r.oid, d.datdba, 'MEMBER')) AS database_owner,
+      current_user = session_user AS same_role
+    FROM pg_roles r CROSS JOIN pg_database d
+    WHERE r.rolname IN (current_user, session_user)
+      AND d.datname = current_database()
+  `);
+  const tables = await client.query<ReaderTableAccess>(
+    `
+    SELECT table_name,
+      has_table_privilege(current_user, table_name, 'SELECT') AS select_allowed,
+      (has_table_privilege(current_user, table_name, 'INSERT') OR
+        has_any_column_privilege(current_user, table_name, 'INSERT')) AS insert_allowed,
+      (has_table_privilege(current_user, table_name, 'UPDATE') OR
+        has_any_column_privilege(current_user, table_name, 'UPDATE')) AS update_allowed,
+      has_table_privilege(current_user, table_name, 'DELETE') AS delete_allowed,
+      has_table_privilege(current_user, table_name, 'TRUNCATE') AS truncate_allowed,
+      (has_table_privilege(current_user, table_name, 'REFERENCES') OR
+        has_any_column_privilege(current_user, table_name, 'REFERENCES')) AS references_allowed,
+      has_table_privilege(current_user, table_name, 'TRIGGER') AS trigger_allowed
+    FROM unnest($1::text[]) AS expected(table_name)
+  `,
+    [[...readerTables]],
+  );
+  const schemas = await client.query<ReaderSchemaAccess>(
+    `
+    SELECT schema_name,
+      has_schema_privilege(current_user, schema_name, 'CREATE') AS create_allowed
+    FROM unnest($1::text[]) AS expected(schema_name)
+  `,
+    [[...readerSchemas]],
+  );
+  validateProductionReaderAccess(role.rows[0], tables.rows, schemas.rows);
+}
+
 async function checkout(source: boolean): Promise<PoolClient> {
   const settings = source ? sourceSettings() : databaseSettings(),
     previous = source ? global._sharedDatabase : global._adminDatabase;
@@ -145,6 +268,8 @@ async function checkout(source: boolean): Promise<PoolClient> {
         .transaction_read_only !== "on"
     )
       throw Error("La conexión compartida debe ser de sólo lectura.");
+    if (source && settings.environment === "production")
+      await verifyProductionReader(client);
     return client;
   } catch (error) {
     client.release(true);

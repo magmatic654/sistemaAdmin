@@ -10,7 +10,11 @@ import {
   parseTicketReference,
   ticketReference,
 } from "../lib/domain.ts";
-import { databaseSettings } from "../lib/db.ts";
+import {
+  databaseSettings,
+  sourceSettings,
+  validateProductionReaderAccess,
+} from "../lib/db.ts";
 test("money uses exact cents and rejects negative, exponent, excessive precision and missing input", () => {
   assert.equal(cents("123.01"), 12301);
   assert.equal(cents("0", undefined, true), 0);
@@ -126,5 +130,186 @@ test("administration and shared reads must use separate databases, even with dif
     for (const key of Object.keys(process.env))
       if (!(key in original)) delete process.env[key];
     Object.assign(process.env, original);
+  }
+});
+
+test("production source reads require explicit local opt-in, never enable production own writes or tests", () => {
+  const original = { ...process.env };
+  try {
+    delete process.env.CENTRAL_INVENTORY_DATABASE_URL;
+    delete process.env.SHARED_DATABASE_ALLOW_PRODUCTION_READS;
+    Object.assign(process.env, {
+      SHARED_DATABASE_MODE: "true",
+      SHARED_DATABASE_ENVIRONMENT: "production",
+      SHARED_DATABASE_ID: "12345678-1234-1234-1234-123456789abc",
+      SHARED_DATABASE_URL: "postgresql://reader@production.invalid:5432/shared",
+      ADMIN_DATABASE_ENVIRONMENT: "development",
+      ADMIN_DATABASE_ID: "abcdefab-1234-1234-1234-123456789abc",
+      DATABASE_URL: "postgresql://writer@127.0.0.1:55439/admin",
+      NODE_ENV: "development",
+    });
+    assert.throws(() => sourceSettings(), /autorización explícita/);
+    assert.throws(() => databaseSettings(), /autorización explícita/);
+    process.env.SHARED_DATABASE_ALLOW_PRODUCTION_READS = "false";
+    assert.throws(() => sourceSettings(), /autorización explícita/);
+    process.env.SHARED_DATABASE_ALLOW_PRODUCTION_READS = "true";
+    assert.equal(sourceSettings().environment, "production");
+    assert.equal(databaseSettings().environment, "development");
+    process.env.NODE_ENV = "test";
+    assert.throws(() => sourceSettings(), /pruebas/);
+    assert.throws(() => databaseSettings(), /pruebas/);
+    process.env.NODE_ENV = "development";
+    process.env.ADMIN_DATABASE_ENVIRONMENT = "production";
+    assert.throws(() => databaseSettings(), /Desarrollo no puede operar/);
+    assert.throws(() => sourceSettings(), /Desarrollo no puede operar/);
+    process.env.NODE_ENV = "production";
+    delete process.env.SHARED_DATABASE_ALLOW_PRODUCTION_READS;
+    assert.equal(sourceSettings().environment, "production");
+    assert.equal(databaseSettings().environment, "production");
+  } finally {
+    for (const key of Object.keys(process.env))
+      if (!(key in original)) delete process.env[key];
+    Object.assign(process.env, original);
+  }
+});
+
+function readerAccess() {
+  return {
+    role: {
+      superuser: false,
+      create_database: false,
+      create_role: false,
+      replication: false,
+      bypass_rls: false,
+      database_owner: false,
+      same_role: true,
+    },
+    tables: [
+      "public.ventas",
+      "public.ventas_productos",
+      "shared_runtime.configuration",
+    ].map((table_name) => ({
+      table_name,
+      select_allowed: true,
+      insert_allowed: false,
+      update_allowed: false,
+      delete_allowed: false,
+      truncate_allowed: false,
+      references_allowed: false,
+      trigger_allowed: false,
+    })),
+    schemas: ["public", "shared_runtime"].map((schema_name) => ({
+      schema_name,
+      create_allowed: false,
+    })),
+  };
+}
+
+test("production reader rejects elevated, owning or inherited owning roles and every effective write privilege", () => {
+  const valid = readerAccess();
+  assert.doesNotThrow(() =>
+    validateProductionReaderAccess(valid.role, valid.tables, valid.schemas),
+  );
+  for (const flag of [
+    "superuser",
+    "create_database",
+    "create_role",
+    "replication",
+    "bypass_rls",
+    "database_owner",
+    "same_role",
+  ]) {
+    const changed = readerAccess();
+    changed.role[flag] = flag !== "same_role";
+    assert.throws(() =>
+      validateProductionReaderAccess(
+        changed.role,
+        changed.tables,
+        changed.schemas,
+      ),
+    );
+  }
+  for (const index of [0, 1, 2]) {
+    for (const flag of [
+      "select_allowed",
+      "insert_allowed",
+      "update_allowed",
+      "delete_allowed",
+      "truncate_allowed",
+      "references_allowed",
+      "trigger_allowed",
+    ]) {
+      const changed = readerAccess();
+      changed.tables[index][flag] = flag !== "select_allowed";
+      assert.throws(() =>
+        validateProductionReaderAccess(
+          changed.role,
+          changed.tables,
+          changed.schemas,
+        ),
+      );
+    }
+  }
+  for (const index of [0, 1]) {
+    const changed = readerAccess();
+    changed.schemas[index].create_allowed = true;
+    assert.throws(() =>
+      validateProductionReaderAccess(
+        changed.role,
+        changed.tables,
+        changed.schemas,
+      ),
+    );
+  }
+});
+
+test("production reader fails closed for missing, unknown or duplicate access facts", () => {
+  for (const mutate of [
+    (value) => {
+      value.role = undefined;
+    },
+    (value) => {
+      delete value.role.superuser;
+    },
+    (value) => {
+      value.role.database_owner = null;
+    },
+    (value) => {
+      value.tables.pop();
+    },
+    (value) => {
+      value.tables.push({ ...value.tables[0] });
+    },
+    (value) => {
+      value.tables[1] = { ...value.tables[0] };
+    },
+    (value) => {
+      value.tables[0].table_name = "public.other";
+    },
+    (value) => {
+      delete value.tables[0].update_allowed;
+    },
+    (value) => {
+      value.tables[0].select_allowed = null;
+    },
+    (value) => {
+      value.schemas.pop();
+    },
+    (value) => {
+      value.schemas[1] = { ...value.schemas[0] };
+    },
+    (value) => {
+      value.schemas[0].create_allowed = null;
+    },
+  ]) {
+    const changed = readerAccess();
+    mutate(changed);
+    assert.throws(() =>
+      validateProductionReaderAccess(
+        changed.role,
+        changed.tables,
+        changed.schemas,
+      ),
+    );
   }
 });

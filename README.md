@@ -68,10 +68,10 @@ anulan manualmente aquí. Nuevos abonos sobre un ticket cancelado se rechazan.
 Requiere Node.js 22.18+ y el PostgreSQL local preparado en `127.0.0.1:55439`.
 La configuración local usa dos bases y credenciales diferentes:
 
-| Conexión              | Base                         | Acceso                                      |
-| --------------------- | ---------------------------- | ------------------------------------------- |
-| `DATABASE_URL`        | `llantas_administracion_dev` | Escritura propia con `sistema_admin_writer` |
-| `SHARED_DATABASE_URL` | `llantas_unified_dev`        | SELECT con `sistema_admin_source_reader`    |
+| Conexión              | Base                                                            | Acceso                                      |
+| --------------------- | --------------------------------------------------------------- | ------------------------------------------- |
+| `DATABASE_URL`        | `llantas_administracion_dev`                                    | Escritura propia con `sistema_admin_writer` |
+| `SHARED_DATABASE_URL` | `postgres` desplegada; `llantas_unified_dev` en pruebas locales | SELECT con credencial exclusiva de lectura  |
 
 1. `npm ci`.
 2. Conservar la configuración privada preparada en `.env.local`; `.env.example`
@@ -96,7 +96,17 @@ El servidor escucha en loopback. Las APIs no requieren login; las escrituras
 validan el origen de la petición. El pool comprueba versión, entorno, nombre e
 identidad de cada base antes de operar. La conexión de origen tiene SELECT y
 transacciones de sólo lectura; la app no escribe en la base compartida.
-Desarrollo rechaza una instancia productiva.
+Desarrollo rechaza la escritura en una base propia productiva.
+La lectura operativa de tickets desplegados permite un origen `production` con
+`SHARED_DATABASE_ALLOW_PRODUCTION_READS=true`. Cada conexión verifica que el usuario
+sólo tenga SELECT, sin propiedad ni permisos de escritura o creación. La base
+propia mantiene su conexión independiente. Las pruebas nunca admiten producción.
+`scripts/configure-production-source.mjs` prepara únicamente la credencial lectora
+del destino fijado mediante `--connection-file`, `--instance` y `--cluster`, verifica
+sus permisos y guarda la conexión en `.env.local`. No modifica registros de venta,
+existencias, folios ni el esquema de las apps desplegadas. Los secretos quedan en
+`.local/`; el perfil previo se conserva en `.local/development.env` para ejecutar
+las pruebas de integración con las dos bases locales.
 Las variables privadas, respaldos y datos de QA quedan fuera de Git.
 
 ## Cifras y persistencia
