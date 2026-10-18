@@ -122,6 +122,35 @@ existencias, folios ni el esquema de las apps desplegadas. Los secretos quedan e
 las pruebas de integración con las dos bases locales.
 Las variables privadas, respaldos y datos de QA quedan fuera de Git.
 
+## Despliegue en Coolify
+
+El servidor publicado usa `npm run build` y `npm start`, en el puerto 3000 y
+la interfaz `0.0.0.0`. `npm run dev` conserva el acceso local en el puerto 3002.
+
+Configurar en el servidor una **base propia de Administración**, diferente de la
+base de tickets. `DATABASE_URL`, `ADMIN_DATABASE_ENVIRONMENT=production` y
+`ADMIN_DATABASE_ID` identifican esa base. Las variables `SHARED_DATABASE_*`
+identifican el origen con su usuario exclusivo de lectura y entorno `production`.
+No copiar las conexiones de `127.0.0.1` de `.env.local` al contenedor publicado.
+Conservar los UUID reales de cada base y la configuración SSL de su proveedor.
+
+Antes de arrancar, ejecutar con las variables del servidor:
+
+```sh
+npm run db:deploy:check
+```
+
+Si la base propia está vacía, revisar el destino y ejecutar una sola vez
+`npm run db:deploy:install`. Instala el esquema y su identidad en una transacción,
+sin crear ventas ni empleados. Rechaza bases de ventas, identidades distintas e
+instalaciones parciales. Si ya está instalada, sólo la verifica: no repite
+migraciones sobre el historial. Los scripts locales `db:migrate` y `db:setup`
+no sirven para preparar producción.
+
+La API informa causas distinguibles de conexión, permisos, esquema e identidad
+sin exponer contraseñas ni conexiones. Una portada HTTP 200 no garantiza que la
+base funcione; verificar también la carga de Registro, Ganancia y Empleados.
+
 ## Cifras y persistencia
 
 Ganancia = ventas confirmadas − salidas − comisiones de ventas confirmadas en el período.
@@ -176,7 +205,7 @@ CODE128 renderizadas a 203 y 300 dpi. La impresora y el lector físicos deben pr
 con un ticket real antes del uso operativo.
 
 Las migraciones se aplican en una transacción, sólo en la base propia.
-No se aplicaron a producción ni se desplegó la aplicación. El código de la app
-nunca ejecuta migraciones desde una petición.
+El código de la app nunca ejecuta migraciones desde una petición. La preparación
+productiva es una operación explícita y separada del inicio del servidor.
 
 Configuración del lector y comprobación física: [guía de tickets](docs/scanner.md).

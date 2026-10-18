@@ -1,4 +1,5 @@
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
+import { StorageError } from "./errors.ts";
 
 type Settings = {
   url: string;
@@ -15,21 +16,26 @@ function configuration(source: boolean): Settings {
     process.env.SHARED_DATABASE_MODE !== "true" ||
     process.env.CENTRAL_INVENTORY_DATABASE_URL !== undefined
   )
-    throw Error(
+    throw new StorageError(
+      "DATABASE_MODE_INVALID",
       "Administración requiere exclusivamente la conexión compartida de lectura y su base propia.",
     );
   if (
     process.env.ADMIN_DATABASE_ENVIRONMENT === "production" &&
     process.env.NODE_ENV !== "production"
   )
-    throw Error("Desarrollo no puede operar la base de producción.");
+    throw new StorageError(
+      "ADMIN_PRODUCTION_ACCESS_BLOCKED",
+      "Desarrollo no puede operar la base de producción.",
+    );
   if (
     process.env.SHARED_DATABASE_ENVIRONMENT === "production" &&
     (process.env.NODE_ENV === "test" ||
       (process.env.NODE_ENV !== "production" &&
         process.env.SHARED_DATABASE_ALLOW_PRODUCTION_READS !== "true"))
   )
-    throw Error(
+    throw new StorageError(
+      "SOURCE_PRODUCTION_ACCESS_BLOCKED",
       "La lectura de producción requiere autorización explícita y no está permitida en pruebas.",
     );
   const environment =
@@ -37,14 +43,16 @@ function configuration(source: boolean): Settings {
       source ? "SHARED_DATABASE_ENVIRONMENT" : "ADMIN_DATABASE_ENVIRONMENT"
     ];
   if (!["development", "production"].includes(environment || ""))
-    throw Error(
+    throw new StorageError(
+      source ? "SOURCE_ENVIRONMENT_INVALID" : "ADMIN_ENVIRONMENT_INVALID",
       "Configura el entorno de la base de " +
         (source ? "origen." : "Administración."),
     );
   const instance =
     process.env[source ? "SHARED_DATABASE_ID" : "ADMIN_DATABASE_ID"] || "";
   if (!/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/i.test(instance))
-    throw Error(
+    throw new StorageError(
+      source ? "SOURCE_IDENTITY_INVALID" : "ADMIN_IDENTITY_INVALID",
       "Configura la identidad de la base de " +
         (source ? "origen." : "Administración."),
     );
@@ -61,7 +69,8 @@ function configuration(source: boolean): Settings {
     )
       throw Error();
   } catch {
-    throw Error(
+    throw new StorageError(
+      source ? "SOURCE_CONNECTION_INVALID" : "ADMIN_CONNECTION_INVALID",
       "Configura una conexión PostgreSQL válida para " +
         (source ? "lectura compartida." : "Administración."),
     );
@@ -87,7 +96,8 @@ export function databaseSettings(): Settings {
     (ownUrl.port || "5432") === (sourceUrl.port || "5432") &&
     settings.database === source.database
   )
-    throw Error(
+    throw new StorageError(
+      "DATABASE_SEPARATION_REQUIRED",
       "Administración debe usar una base diferente de la compartida.",
     );
   return settings;
@@ -164,7 +174,8 @@ export function validateProductionReaderAccess(
       return matches.length !== 1 || matches[0].create_allowed !== false;
     })
   )
-    throw Error(
+    throw new StorageError(
+      "SOURCE_READER_PERMISSIONS_INVALID",
       "La conexión de producción requiere un usuario exclusivo de sólo lectura, sin propiedad ni permisos de escritura o creación.",
     );
 }
@@ -247,11 +258,16 @@ async function checkout(source: boolean): Promise<PoolClient> {
     const identity = await client.query(
       `SELECT current_database() AS database,to_regclass('${schema}.configuration')::text AS configuration`,
     );
-    if (
-      identity.rows[0]?.database !== settings.database ||
-      !identity.rows[0]?.configuration
-    )
-      throw Error("La base no tiene la identidad esperada.");
+    if (identity.rows[0]?.database !== settings.database)
+      throw new StorageError(
+        source ? "SOURCE_IDENTITY_MISMATCH" : "ADMIN_IDENTITY_MISMATCH",
+        "La base no tiene la identidad esperada.",
+      );
+    if (!identity.rows[0]?.configuration)
+      throw new StorageError(
+        source ? "SOURCE_SCHEMA_MISSING" : "ADMIN_SCHEMA_MISSING",
+        "La base no tiene la identidad esperada.",
+      );
     const { rows } = await client.query(
       `SELECT version,environment,instance_id::text FROM ${schema}.configuration WHERE singleton IS TRUE`,
     );
@@ -261,13 +277,19 @@ async function checkout(source: boolean): Promise<PoolClient> {
       rows[0].environment !== settings.environment ||
       rows[0].instance_id !== settings.instance
     )
-      throw Error("La versión, entorno o instancia de la base no coincide.");
+      throw new StorageError(
+        source ? "SOURCE_IDENTITY_MISMATCH" : "ADMIN_IDENTITY_MISMATCH",
+        "La versión, entorno o instancia de la base no coincide.",
+      );
     if (
       source &&
       (await client.query("SHOW transaction_read_only")).rows[0]
         .transaction_read_only !== "on"
     )
-      throw Error("La conexión compartida debe ser de sólo lectura.");
+      throw new StorageError(
+        "SOURCE_READ_ONLY_REQUIRED",
+        "La conexión compartida debe ser de sólo lectura.",
+      );
     if (source && settings.environment === "production")
       await verifyProductionReader(client);
     return client;

@@ -7,6 +7,7 @@ import {
   payoutPreview,
 } from "@/lib/data";
 import { ValidationError } from "@/lib/domain";
+import { storageDiagnostic } from "@/lib/errors";
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store" };
 function failure(error: unknown) {
@@ -21,13 +22,12 @@ function failure(error: unknown) {
       },
       { status: 409, headers },
     );
-  console.error("Administration operation failed", {
-    code: code || "internal",
-  });
+  const diagnostic = storageDiagnostic(error);
+  console.error("Administration operation failed", { code: diagnostic.code });
   return Response.json(
     {
-      error:
-        "No fue posible completar la operación. Verifica la conexión y el esquema de Administración.",
+      error: diagnostic.message,
+      code: diagnostic.code,
     },
     { status: 503, headers },
   );

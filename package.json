@@ -11,6 +11,8 @@
     "test": "node --test tests/*.test.mjs",
     "test:integration": "node --env-file=.env.local --env-file-if-exists=.local/development.env scripts/integration.mjs",
     "db:migrate": "node --env-file=.env.local scripts/migrate.mjs",
+    "db:deploy:check": "node scripts/deploy-migrate.mjs --check",
+    "db:deploy:install": "node scripts/deploy-migrate.mjs --apply",
     "db:setup": "node --env-file=.env.local scripts/setup-storage.mjs"
   },
   "dependencies": {
